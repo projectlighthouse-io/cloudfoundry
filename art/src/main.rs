@@ -1,6 +1,7 @@
 //! `art`: scaffolds apps, runs the dev loop, forwards everything else to the
 //! app binary with `cargo run --`.
 
+mod make;
 mod new;
 
 use std::{
@@ -37,6 +38,15 @@ enum Cli {
     /// New reversible migration under migrations/.
     #[command(name = "make:migration")]
     MakeMigration { name: String },
+    /// Handler function stub in src/handlers/.
+    #[command(name = "make:handler")]
+    MakeHandler { name: String },
+    /// Action struct with input, output and `impl Action` in src/actions/.
+    #[command(name = "make:action")]
+    MakeAction { name: String },
+    /// Input struct with `impl Validate` in src/requests/.
+    #[command(name = "make:request")]
+    MakeRequest { name: String },
     #[command(external_subcommand)]
     App(Vec<String>),
 }
@@ -48,6 +58,9 @@ fn main() -> ExitCode {
         Cli::Migrate => sqlx(&["migrate", "run"]).and_then(|()| refresh_query_cache()),
         Cli::MigrateRollback => sqlx(&["migrate", "revert"]),
         Cli::MakeMigration { name } => sqlx(&["migrate", "add", "-r", &name]),
+        Cli::MakeHandler { name } => make::run(make::Kind::Handler, &name),
+        Cli::MakeAction { name } => make::run(make::Kind::Action, &name),
+        Cli::MakeRequest { name } => make::run(make::Kind::Request, &name),
         Cli::App(args) => return forward(&args),
     };
     match result {

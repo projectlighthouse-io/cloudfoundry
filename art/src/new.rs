@@ -45,7 +45,9 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
     let cargo_toml = CARGO_TOML
         .replace("{route}", &source.dep("route"))
         .replace("{db}", &source.dep("db"))
-        .replace("{command}", &source.dep("command"));
+        .replace("{command}", &source.dep("command"))
+        .replace("{action}", &source.dep("action"))
+        .replace("{validate}", &source.dep("validate"));
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
@@ -58,6 +60,8 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         ("src/error.rs", ERROR),
         ("src/routes.rs", ROUTES),
         ("src/handlers/mod.rs", HANDLERS),
+        ("src/actions/mod.rs", ""),
+        ("src/requests/mod.rs", ""),
         ("src/commands/mod.rs", COMMANDS),
     ];
     for (file, contents) in files {
@@ -76,9 +80,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-command = { {command} }
+action = { {action} }
+command = { {command}, features = ["action"] }
 db = { {db}, features = ["postgres"] }
-route = { {route}, features = ["server", "command"] }
+route = { {route}, features = ["server", "command", "action"] }
+validate = { {validate}, features = ["route"] }
 
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
@@ -89,10 +95,12 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 const ENV: &str = "APP_NAME={name}\nDATABASE_URL=postgres://localhost/{name}\n";
 
-const MAIN: &str = r#"mod commands;
+const MAIN: &str = r#"mod actions;
+mod commands;
 mod config;
 mod error;
 mod handlers;
+mod requests;
 mod routes;
 mod state;
 
