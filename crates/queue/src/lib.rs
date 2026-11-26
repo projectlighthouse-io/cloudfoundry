@@ -24,12 +24,20 @@ mod worker;
 
 #[cfg(feature = "command")]
 pub mod command;
+#[cfg(feature = "mysql")]
+mod mysql;
 #[cfg(feature = "postgres")]
 mod postgres;
+#[cfg(feature = "sqlite")]
+mod sqlite;
 
 pub use memory::MemoryStore;
+#[cfg(feature = "mysql")]
+pub use mysql::MysqlStore;
 #[cfg(feature = "postgres")]
 pub use postgres::PostgresStore;
+#[cfg(feature = "sqlite")]
+pub use sqlite::SqliteStore;
 pub use worker::{BoxFuture, Worker, shutdown_signal};
 
 use std::{fmt, future::Future, sync::Arc, time::Duration};
@@ -138,6 +146,30 @@ impl<St: Store> Queue<St> {
     pub async fn push_in<J: Job>(&self, delay: Duration, job: J) -> Result<JobId, Error> {
         self.store.push(new_job(&job, delay)?).await
     }
+}
+
+/// `?, ?, ?` for SQL drivers without array binds.
+#[allow(dead_code)]
+pub(crate) fn placeholders(n: usize) -> String {
+    vec!["?"; n].join(", ")
+}
+
+/// Rows from a claim query, oldest first (`RETURNING` order is not guaranteed).
+#[allow(dead_code)]
+pub(crate) fn claimed(rows: Vec<(i64, String, String, String, i32, i32)>) -> Vec<Claimed> {
+    let mut jobs: Vec<Claimed> = rows
+        .into_iter()
+        .map(|(id, queue, name, payload, attempts, max)| Claimed {
+            id: JobId(id),
+            queue,
+            name,
+            payload,
+            attempts: attempts as u32,
+            max_attempts: max as u32,
+        })
+        .collect();
+    jobs.sort_by_key(|j| j.id);
+    jobs
 }
 
 pub(crate) fn new_job<J: Job>(job: &J, delay: Duration) -> Result<NewJob, Error> {

@@ -58,19 +58,7 @@ impl Store for PostgresStore {
             .bind(visibility.as_secs() as i64)
             .fetch_all(&self.0)
             .await?;
-        let mut jobs: Vec<Claimed> = rows
-            .into_iter()
-            .map(|(id, queue, name, payload, attempts, max)| Claimed {
-                id: JobId(id),
-                queue,
-                name,
-                payload,
-                attempts: attempts as u32,
-                max_attempts: max as u32,
-            })
-            .collect();
-        jobs.sort_by_key(|j| j.id); // RETURNING order is not guaranteed
-        Ok(jobs)
+        Ok(crate::claimed(rows))
     }
 
     async fn complete(&self, id: JobId) -> Result<(), Error> {

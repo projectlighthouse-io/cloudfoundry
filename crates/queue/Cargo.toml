@@ -15,8 +15,10 @@ clap = { version = "4", features = ["derive"], optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
 
 [features]
-# `PostgresStore` (FOR UPDATE SKIP LOCKED). Publish its tables with `art publish queue`.
+# SQL stores. Publish the tables with `art publish queue [--driver sqlite|mysql]`.
 postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
 # `queue::command::{work, retry}` for the `command` crate.
 command = ["dep:clap"]
 
@@ -27,6 +29,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
 [package.metadata.art.publish]
 "stubs/migrations/create_jobs.up.sql" = "migrations/{timestamp}_create_jobs.up.sql"
 "stubs/migrations/create_jobs.down.sql" = "migrations/{timestamp}_create_jobs.down.sql"
+
+[package.metadata.art.publish-sqlite]
+"stubs/migrations/sqlite/create_jobs.up.sql" = "migrations/{timestamp}_create_jobs.up.sql"
+"stubs/migrations/sqlite/create_jobs.down.sql" = "migrations/{timestamp}_create_jobs.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/migrations/mysql/create_jobs.up.sql" = "migrations/{timestamp}_create_jobs.up.sql"
+"stubs/migrations/mysql/create_jobs.down.sql" = "migrations/{timestamp}_create_jobs.down.sql"
 
 [package.metadata.art]
 notes = "Run `art migrate` to create the jobs and failed_jobs tables."
