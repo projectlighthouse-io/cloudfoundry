@@ -34,4 +34,8 @@ action = ["dep:action"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+
+[[example]]
+name = "hello"
+required-features = ["server"]
