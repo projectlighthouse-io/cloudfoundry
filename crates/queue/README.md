@@ -24,7 +24,8 @@ queue::Worker::new(queue, app).register::<ExecuteRun>().concurrency(8)
     .run(queue::shutdown_signal()).await;
 ```
 
-At-least-once delivery: jobs must be idempotent. Retries with backoff, then
+At-least-once delivery: jobs must be idempotent. A heartbeat extends a running
+job's hold, so long jobs are not claimed twice. Retries with backoff, then
 `failed_jobs`. Tables: `art publish queue [--driver sqlite|mysql]`. See `examples/worker.rs`.
 
 ## Features
@@ -33,3 +34,4 @@ At-least-once delivery: jobs must be idempotent. Retries with backoff, then
 | --- | --- |
 | `postgres`, `mysql`, `sqlite` | SQL stores (`MemoryStore` always) |
 | `command` | `queue::command::{work, retry}` |
+| `action` | `ActionJob`: `queue.push_action::<A>(input)`, `worker.register_action(\|app\| A { .. })` |

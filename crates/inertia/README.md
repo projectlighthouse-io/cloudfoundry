@@ -24,11 +24,13 @@ router.layer(inertia::layer()
     .head(move || vite.tags()));
 ```
 
-HTML on first visits, JSON on Inertia visits, partial reloads, `Optional`/`Defer`
-props, the asset version check (409) and 303s after PUT/PATCH/DELETE.
+HTML on first visits, JSON on Inertia visits, partial reloads, `Optional`/`Defer`/
+`Merge`/`Once` props, error bags, the asset version check (409) and 303s after
+PUT/PATCH/DELETE. `.pages_dir(dir)` catches a mistyped component in debug builds.
 
 ## Features
 
 | Feature | Adds |
 | --- | --- |
 | `validate` | On an Inertia visit, a validation failure redirects back with `props.errors` |
+| `ssr` | `.ssr("http://127.0.0.1:13714")`: render first visits on the Inertia SSR server, falling back to the client |

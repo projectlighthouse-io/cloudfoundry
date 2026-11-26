@@ -14,7 +14,7 @@ router
 ```
 
 Unsafe methods must send the token in `X-XSRF-TOKEN` (the Inertia v3 default, read
-from the `XSRF-TOKEN` cookie this layer sets) or `X-CSRF-TOKEN`. Failure is a bare 419.
+from the `XSRF-TOKEN` cookie this layer sets), `X-CSRF-TOKEN`, or a `_token` form field. Failure is a bare 419.
 Constant-time comparison.
 
 ## Features

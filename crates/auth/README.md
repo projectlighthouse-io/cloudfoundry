@@ -22,5 +22,9 @@ async fn me(user: auth::Authed<User>) -> String { user.email.clone() }
 async fn login((auth, input): (auth::Auth<User>, Valid<Json<Login>>)) -> Redirect { /* auth.login(&user) */ }
 ```
 
-`art publish auth` copies login handlers, the login page, a `users` migration and a
+"Remember me": implement `auth::Remember` and add `.remember(codec)`; then
+`auth.login_remember(&user)`. API tokens: implement `auth::Tokens` and add
+`.tokens()`; `Authorization: Bearer` requests are authenticated without a session.
+
+`art publish auth [--driver sqlite|mysql]` copies login handlers, the login page, a `users` migration and a
 `Provider` into the app, to own and edit.
