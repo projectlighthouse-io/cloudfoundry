@@ -33,6 +33,7 @@ csrf = ["dep:csrf"]
 command = ["dep:clap"]
 
 [dev-dependencies]
+csrf = { path = "../csrf", features = ["route"] }
 serde = { version = "1", features = ["derive"] }
 http-body-util = "0.1"
 serde_json = "1"
