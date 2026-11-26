@@ -1,0 +1,21 @@
+[package]
+name = "validate"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Validate input and prove it with Valid<T>"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+
+route = { path = "../route", optional = true }
+
+[features]
+# `Valid<Form<T>>` (and `Json`, `Query`, `Path`) as a handler input.
+route = ["dep:route"]
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+http-body-util = "0.1"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt"] }
