@@ -1,0 +1,5 @@
+# Each member is a standalone crate. Use one as a git dependency:
+#   route = { git = "<repo url>" }
+[workspace]
+resolver = "3"
+members = ["crates/*", "art"]
