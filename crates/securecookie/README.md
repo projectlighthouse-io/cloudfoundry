@@ -4,7 +4,7 @@ Sign and encrypt cookie values.
 
 ```toml
 [dependencies]
-securecookie = { git = "https://github.com/ProjectLighthouse/cloudfoundry" }
+securecookie = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
 ```
 
 ```rust

@@ -4,7 +4,7 @@ Hash and verify passwords with Argon2id.
 
 ```toml
 [dependencies]
-password = { git = "https://github.com/ProjectLighthouse/cloudfoundry" }
+password = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
 ```
 
 ```rust

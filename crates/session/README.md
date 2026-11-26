@@ -4,7 +4,7 @@ Load and save session data for a request.
 
 ```toml
 [dependencies]
-session = { git = "https://github.com/ProjectLighthouse/cloudfoundry", features = ["postgres", "route", "csrf"] }
+session = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["postgres", "route", "csrf"] }
 ```
 
 ```rust

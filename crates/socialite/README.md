@@ -4,7 +4,7 @@ OAuth login with third-party providers (GitHub).
 
 ```toml
 [dependencies]
-socialite = { git = "https://github.com/ProjectLighthouse/cloudfoundry" }
+socialite = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
 ```
 
 ```rust

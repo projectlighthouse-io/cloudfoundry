@@ -4,7 +4,7 @@ One trait for a unit of application logic.
 
 ```toml
 [dependencies]
-action = { git = "https://github.com/ProjectLighthouse/cloudfoundry" }
+action = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
 ```
 
 ```rust

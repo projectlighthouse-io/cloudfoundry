@@ -4,7 +4,7 @@ Register and dispatch commands in the app binary.
 
 ```toml
 [dependencies]
-command = { git = "https://github.com/ProjectLighthouse/cloudfoundry" }
+command = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
 ```
 
 ```rust

@@ -4,7 +4,7 @@ Typed `sqlx` pool handles and explicit transactions.
 
 ```toml
 [dependencies]
-db = { git = "https://github.com/ProjectLighthouse/cloudfoundry", features = ["postgres"] }
+db = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["postgres"] }
 ```
 
 ```rust

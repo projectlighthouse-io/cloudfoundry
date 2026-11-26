@@ -4,7 +4,7 @@ Validate input and prove it with `Valid<T>`.
 
 ```toml
 [dependencies]
-validate = { git = "https://github.com/ProjectLighthouse/cloudfoundry", features = ["route"] }
+validate = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["route"] }
 ```
 
 ```rust

@@ -4,8 +4,8 @@ The CLI: scaffolds apps, runs the dev loop, forwards everything else to the app
 binary (`cargo run -- <command>`). Depends on none of the crates.
 
 ```bash
-cargo install --git https://github.com/ProjectLighthouse/cloudfoundry art
-art new myapp --git https://github.com/ProjectLighthouse/cloudfoundry
+cargo install --git https://github.com/projectlighthouse-io/cloudfoundry art
+art new myapp --git https://github.com/projectlighthouse-io/cloudfoundry
 cd myapp && npm install
 art publish session && art publish queue && art migrate
 art dev
