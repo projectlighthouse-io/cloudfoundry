@@ -23,6 +23,7 @@ tokio = { version = "1", features = ["macros", "rt"] }
 "stubs/users.rs" = "src/users.rs"
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
+"stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -34,7 +35,8 @@ Add the dependency `password = { <same source as auth> }`, then:
                         .layer(auth::layer(users::Users { db: app.db.clone() }))   // after the session and csrf layers
   src/handlers/mod.rs   pub mod login;
   src/requests/mod.rs   pub mod login;
-  src/routes.rs         r.post("/login", handlers::login::login).name("login.store");
+  src/routes.rs         r.get("/login", handlers::login::show).name("login");
+                        r.post("/login", handlers::login::login).name("login.store");
                         r.post("/logout", handlers::login::logout).name("logout");
 
 Then run `art migrate`."""

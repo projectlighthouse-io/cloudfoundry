@@ -6,6 +6,10 @@ use validate::{Errors, Valid};
 
 use crate::{error::AppError, requests::login::Login, state::App, users::{User, Users}};
 
+pub async fn show(_: ()) -> inertia::Page<()> {
+    inertia::render("auth/login", ())
+}
+
 pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>)) -> Result<Redirect, Response<Body>> {
     let failed = || {
         let mut e = Errors::new();

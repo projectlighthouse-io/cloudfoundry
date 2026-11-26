@@ -1,0 +1,26 @@
+<script setup lang="ts">
+import { useForm } from '@inertiajs/vue3'
+
+const form = useForm({ email: '', password: '' })
+</script>
+
+<template>
+  <main>
+    <h1>Log in</h1>
+    <form @submit.prevent="form.post('/login')">
+      <label>
+        Email
+        <input v-model="form.email" type="email" autocomplete="username" required />
+      </label>
+      <p v-if="form.errors.email">{{ form.errors.email }}</p>
+
+      <label>
+        Password
+        <input v-model="form.password" type="password" autocomplete="current-password" required />
+      </label>
+      <p v-if="form.errors.password">{{ form.errors.password }}</p>
+
+      <button type="submit" :disabled="form.processing">Log in</button>
+    </form>
+  </main>
+</template>
