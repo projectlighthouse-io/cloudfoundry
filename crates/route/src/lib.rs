@@ -152,11 +152,12 @@ pub struct Router<S> {
     layers: Vec<LayerFn>,
     routes: Vec<Route<S>>,
     groups: Vec<Router<S>>,
+    fallback: Option<BoxService>,
 }
 
 impl<S> Default for Router<S> {
     fn default() -> Self {
-        Self { prefix: String::new(), name_prefix: String::new(), layers: vec![], routes: vec![], groups: vec![] }
+        Self { prefix: String::new(), name_prefix: String::new(), layers: vec![], routes: vec![], groups: vec![], fallback: None }
     }
 }
 
@@ -220,6 +221,20 @@ impl<S: Send + Sync + 'static> Router<S> {
         self
     }
 
+    /// Serve requests that match no path, e.g. `tower_http::services::ServeDir`
+    /// for built assets. Router layers do not wrap it. Without one, a 404.
+    pub fn fallback<T, B>(&mut self, svc: T) -> &mut Self
+    where
+        T: Service<Request<Body>, Response = Response<B>, Error = Infallible> + Clone + Send + Sync + 'static,
+        T::Future: Send + 'static,
+        B: http_body::Body<Data = Bytes> + Send + 'static,
+        B::Error: Into<BoxError>,
+    {
+        let svc = svc.map_response(|res: Response<B>| res.map(|b| b.map_err(Into::into).boxed_unsync()));
+        self.fallback = Some(BoxCloneSyncService::new(svc));
+        self
+    }
+
     /// Validate the table and freeze it. Fails on duplicate names, duplicate
     /// method and path pairs, and conflicting paths.
     pub fn build(&self, state: S) -> Result<Routes, BuildError> {
@@ -277,7 +292,7 @@ impl<S: Send + Sync + 'static> Router<S> {
             }));
         }
 
-        Ok(Routes(Arc::new(Inner { matcher, endpoints, table, urls })))
+        Ok(Routes(Arc::new(Inner { matcher, endpoints, table, urls, fallback: self.fallback.clone() })))
     }
 
     /// `build`, then fail if any name in `N::ALL` has no route.
@@ -376,6 +391,7 @@ struct Inner {
     endpoints: Vec<Vec<(Method, BoxService, usize)>>,
     table: Vec<Arc<RouteInfo>>,
     urls: Arc<Urls>,
+    fallback: Option<BoxService>,
 }
 
 /// URL generation for layers, which run outside the handler. In request
@@ -414,7 +430,10 @@ impl Routes {
     fn dispatch(&self, mut req: Request<Body>) -> ResponseFuture {
         let inner = &self.0;
         let Ok(m) = inner.matcher.at(req.uri().path()) else {
-            return ResponseFuture::ready(StatusCode::NOT_FOUND.into_response());
+            return match &inner.fallback {
+                Some(svc) => ResponseFuture(Kind::Service(svc.clone().oneshot(req))),
+                None => ResponseFuture::ready(StatusCode::NOT_FOUND.into_response()),
+            };
         };
         let ep = *m.value;
         let params = PathParams::decode(m.params.iter());

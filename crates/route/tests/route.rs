@@ -138,3 +138,13 @@ fn bad_tables_do_not_build() {
     r.get("/", |_: ()| async {}).name(Name::Home);
     assert!(matches!(r.build_named::<Name>(()), Err(BuildError::UnregisteredName("gone"))));
 }
+
+#[tokio::test]
+async fn fallback_serves_unmatched_paths() {
+    let mut r = Router::<()>::new();
+    r.get("/", |_: ()| async { "home" });
+    r.fallback(tower::service_fn(|_: Request<Body>| async { Ok::<_, std::convert::Infallible>(http::Response::new(body("static"))) }));
+    let routes = r.build(()).unwrap();
+    assert_eq!(call(&routes, Method::GET, "/app.js", empty()).await.2, "static");
+    assert_eq!(call(&routes, Method::GET, "/", empty()).await.2, "home");
+}
