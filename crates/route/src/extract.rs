@@ -43,6 +43,19 @@ fn content_type_is(req: &Request<Body>, mime: &str) -> bool {
         .is_some_and(|v| v.trim().eq_ignore_ascii_case(mime))
 }
 
+macro_rules! deref {
+    ($($wrapper:ident),*) => {$(
+        impl<T> Deref for $wrapper<T> {
+            type Target = T;
+            fn deref(&self) -> &T {
+                &self.0
+            }
+        }
+    )*};
+}
+
+deref!(Path, Query, Form, Json);
+
 impl<S: Send + Sync> FromRequest<S> for () {
     async fn from_request(_: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
         Ok(())

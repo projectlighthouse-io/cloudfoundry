@@ -16,6 +16,7 @@ serde_json = "1"
 serde_urlencoded = "0.7"
 tower = { version = "0.5.2", features = ["util"] }
 
+action = { path = "../action", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"], optional = true }
@@ -26,6 +27,8 @@ tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 server = ["dep:hyper", "dep:hyper-util", "dep:tokio"]
 # `route::command::{list, serve}` for the `command` crate. Needs no dependency on it.
 command = ["dep:clap"]
+# `route::action(a)` turns an `Action` into a handler.
+action = ["dep:action"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
