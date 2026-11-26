@@ -1,0 +1,22 @@
+[package]
+name = "socialite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "OAuth login with third-party providers"
+
+[dependencies]
+base64 = "0.22"
+getrandom = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_urlencoded = "0.7"
+session = { path = "../session" }
+
+[dev-dependencies]
+route = { path = "../route", features = ["server"] }
+securecookie = { path = "../securecookie" }
+session = { path = "../session", features = ["route"] }
+tokio = { version = "1", features = ["macros", "rt", "net"] }
+http-body-util = "0.1"
+serde = { version = "1", features = ["derive"] }
