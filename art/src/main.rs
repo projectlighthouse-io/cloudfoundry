@@ -51,6 +51,17 @@ enum Cli {
     /// View struct with a `From` stub in src/responses/.
     #[command(name = "make:response")]
     MakeResponse { name: String },
+    /// Job struct with `impl Job` in src/jobs/.
+    #[command(name = "make:job")]
+    MakeJob { name: String },
+    /// Event struct in src/events/.
+    #[command(name = "make:event")]
+    MakeEvent {
+        name: String,
+        /// Add a listener function.
+        #[arg(long)]
+        listener: bool,
+    },
     /// Vite production build, then `cargo build --release`.
     Build,
     /// Tower middleware stub in src/middleware/.
@@ -90,6 +101,8 @@ fn main() -> ExitCode {
         Cli::MakePage { path } => make::run(make::Kind::Page, &path),
         Cli::MakeResponse { name } => make::run(make::Kind::Response, &name),
         Cli::Build => build(),
+        Cli::MakeJob { name } => make::run(make::Kind::Job, &name),
+        Cli::MakeEvent { name, listener } => make::run(make::Kind::Event { listener }, &name),
         Cli::Publish { package, list, force } => publish::run(&package, list, force),
         Cli::KeyGenerate => {
             println!("{}", generate_key());

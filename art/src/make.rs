@@ -9,6 +9,8 @@ pub enum Kind {
     Middleware,
     Page,
     Response,
+    Job,
+    Event { listener: bool },
 }
 
 pub fn run(kind: Kind, name: &str) -> Result<(), String> {
@@ -40,6 +42,17 @@ pub fn run(kind: Kind, name: &str) -> Result<(), String> {
             "Render it from a handler:\n    inertia::render(\"{path}\", responses::{snake}::{pascal} {})",
         ),
         Kind::Response => ("responses", RESPONSE, "Build it from a domain value with `{pascal}::from(&value)`."),
+        Kind::Job => (
+            "jobs",
+            JOB,
+            "Register it in src/jobs/mod.rs:\n    w.register::<{snake}::{pascal}>()\nPush it:\n    app.queue.push(jobs::{snake}::{pascal} {}).await?",
+        ),
+        Kind::Event { listener: false } => ("events", EVENT, "Emit it:\n    app.events.emit(&app, events::{snake}::{pascal} {}).await?"),
+        Kind::Event { listener: true } => (
+            "events",
+            EVENT_WITH_LISTENER,
+            "Register the listener in src/events/mod.rs:\n    b.on({snake}::on_{snake})\nEmit it:\n    app.events.emit(&app, events::{snake}::{pascal} {}).await?",
+        ),
         Kind::Middleware => (
             "middleware",
             MIDDLEWARE,
@@ -184,6 +197,46 @@ pub struct {pascal} {
 //         Self { id: run.id }
 //     }
 // }
+"#;
+
+const JOB: &str = r#"use queue::{Job, JobError};
+use serde::{Deserialize, Serialize};
+
+use crate::state::App;
+
+/// Runs at least once: make it safe to run twice.
+#[derive(Serialize, Deserialize)]
+pub struct {pascal} {}
+
+impl Job for {pascal} {
+    /// Stored with queued jobs. Keep it stable.
+    const NAME: &'static str = "{snake}";
+    type Context = App;
+
+    async fn run(self, app: &App) -> Result<(), JobError> {
+        let _ = app;
+        Ok(())
+    }
+}
+"#;
+
+const EVENT: &str = r#"use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct {pascal} {}
+"#;
+
+const EVENT_WITH_LISTENER: &str = r#"use serde::{Deserialize, Serialize};
+
+use crate::state::App;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct {pascal} {}
+
+pub async fn on_{snake}(app: App, event: {pascal}) -> Result<(), event::Error> {
+    let _ = (app, event);
+    Ok(())
+}
 "#;
 
 const MIDDLEWARE: &str = r#"use std::task::{Context, Poll};

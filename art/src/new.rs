@@ -52,7 +52,10 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         .replace("{session}", &source.dep("session"))
         .replace("{csrf}", &source.dep("csrf"))
         .replace("{inertia}", &source.dep("inertia"))
-        .replace("{vite}", &source.dep("vite"));
+        .replace("{vite}", &source.dep("vite"))
+        .replace("{queue}", &source.dep("queue"))
+        .replace("{event}", &source.dep("event"))
+        .replace("{sse}", &source.dep("sse"));
     let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL=postgres://localhost/{name}\n", crate::generate_key());
 
     let files: &[(&str, &str)] = &[
@@ -71,6 +74,8 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         ("src/requests/mod.rs", ""),
         ("src/middleware/mod.rs", ""),
         ("src/responses/mod.rs", "pub mod home;\n"),
+        ("src/jobs/mod.rs", JOBS),
+        ("src/events/mod.rs", EVENTS),
         ("src/responses/home.rs", HOME_PROPS),
         ("package.json", PACKAGE_JSON),
         ("vite.config.ts", VITE_CONFIG),
@@ -87,7 +92,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
     }
 
     println!(
-        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session   # sessions table migration\n  art migrate\n  art dev"
+        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session   # sessions table migration\n  art publish queue     # jobs tables migration\n  art migrate\n  art dev"
     );
     Ok(())
 }
@@ -108,6 +113,9 @@ securecookie = { {securecookie} }
 session = { {session}, features = ["postgres", "route", "csrf", "command"] }
 inertia = { {inertia}, features = ["validate"] }
 vite = { {vite} }
+queue = { {queue}, features = ["postgres", "command"] }
+event = { {event}, features = ["queue", "command"] }
+sse = { {sse}, features = ["route"] }
 
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
@@ -126,14 +134,20 @@ const MAIN: &str = r#"mod actions;
 mod commands;
 mod config;
 mod error;
+mod events;
 mod handlers;
+mod jobs;
 mod middleware;
 mod requests;
 mod responses;
 mod routes;
 mod state;
 
+use std::sync::Arc;
+
 use db::Db;
+use event::Events;
+use queue::Queue;
 use route::Router;
 use securecookie::{Codec, Keys};
 use session::{PostgresStore, Session};
@@ -158,7 +172,10 @@ async fn main() -> Result<(), AppError> {
     let db: Db<Primary> = Db::connect(&cfg.database_url).await?;
     let sessions = PostgresStore::new(db.pool().clone());
 
-    let app = App::new(cfg, db);
+    let queue = Queue::new(queue::PostgresStore::new(db.pool().clone()));
+    let events = Arc::new(events::register(Events::builder().queue(&queue)).build());
+
+    let app = App::new(cfg, db, queue.clone(), events.clone());
 
     let router = routes::register(Router::new())
         .layer(session::layer(sessions.clone(), codec))
@@ -172,7 +189,7 @@ async fn main() -> Result<(), AppError> {
         .fallback(ServeDir::new("public"))
         .build(app.clone())?;
 
-    commands::register(&router, sessions).run(app, std::env::args()).await;
+    commands::register(&router, sessions, queue, events).run(app, std::env::args()).await;
     Ok(())
 }
 "#;
@@ -180,6 +197,8 @@ async fn main() -> Result<(), AppError> {
 const STATE: &str = r#"use std::sync::Arc;
 
 use db::Db;
+use event::Events;
+use queue::{PostgresStore, Queue};
 
 use crate::config::Config;
 
@@ -190,11 +209,13 @@ db::handle!(pub Primary: Postgres);
 pub struct App {
     pub cfg: Arc<Config>,
     pub db: Db<Primary>,
+    pub queue: Queue<PostgresStore>,
+    pub events: Arc<Events<App>>,
 }
 
 impl App {
-    pub fn new(cfg: Config, db: Db<Primary>) -> Self {
-        Self { cfg: Arc::new(cfg), db }
+    pub fn new(cfg: Config, db: Db<Primary>, queue: Queue<PostgresStore>, events: Arc<Events<App>>) -> Self {
+        Self { cfg: Arc::new(cfg), db, queue, events }
     }
 }
 "#;
@@ -294,18 +315,29 @@ pub async fn health(cx: Cx<App>) -> Result<&'static str, AppError> {
 }
 "#;
 
-const COMMANDS: &str = r#"use command::Commands;
+const COMMANDS: &str = r#"use std::sync::Arc;
+
+use command::Commands;
+use event::Events;
+use queue::Queue;
 use route::Routes;
-use session::PostgresStore;
 
 use crate::state::App;
 
 /// Every command the binary runs. `serve` runs when none is given.
-pub fn register(routes: &Routes, sessions: PostgresStore) -> Commands<App> {
+pub fn register(
+    routes: &Routes,
+    sessions: session::PostgresStore,
+    queue: Queue<queue::PostgresStore>,
+    events: Arc<Events<App>>,
+) -> Commands<App> {
     Commands::new()
         .default("serve", route::command::serve(routes))
         .add("route:list", route::command::list(routes))
         .add("session:prune", session::command::prune(sessions))
+        .add("event:list", event::command::list(&events))
+        .add("queue:retry", queue::command::retry(queue.clone()))
+        .add("queue:work", queue::command::work(queue, move |w| crate::jobs::register(events.register_jobs(w))))
 }
 "#;
 
@@ -410,4 +442,25 @@ const APP_HTML: &str = r#"<!doctype html>
     {{ inertia }}
   </body>
 </html>
+"#;
+
+const JOBS: &str = r#"use queue::{PostgresStore, Worker};
+
+use crate::state::App;
+
+/// Every job `queue:work` runs. Add `.register::<my_job::MyJob>()` per job.
+pub fn register(w: Worker<PostgresStore, App>) -> Worker<PostgresStore, App> {
+    w
+}
+"#;
+
+const EVENTS: &str = r#"use event::EventsBuilder;
+
+use crate::state::App;
+
+/// Every listener. Add `.on(my_event::on_my_event)` or
+/// `.on_queued("name", my_event::on_my_event)` per listener.
+pub fn register(b: EventsBuilder<App>) -> EventsBuilder<App> {
+    b
+}
 "#;
