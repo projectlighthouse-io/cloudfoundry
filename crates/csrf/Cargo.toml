@@ -1,0 +1,23 @@
+[package]
+name = "csrf"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Issue and verify CSRF tokens"
+
+[dependencies]
+base64 = "0.22"
+getrandom = "0.3"
+http = "1"
+tower = "0.5"
+tracing = "0.1"
+
+route = { path = "../route", optional = true }
+
+[features]
+# `except([...])`: exempt routes by name.
+route = ["dep:route"]
+
+[dev-dependencies]
+route = { path = "../route" }
+tokio = { version = "1", features = ["macros", "rt"] }
