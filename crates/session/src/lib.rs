@@ -21,9 +21,13 @@ mod store;
 pub mod command;
 
 pub use layer::{SameSite, SessionLayer, layer};
+#[cfg(feature = "mysql")]
+pub use store::MysqlStore;
 #[cfg(feature = "postgres")]
 pub use store::PostgresStore;
-pub use store::{MemoryStore, Record, Store};
+#[cfg(feature = "sqlite")]
+pub use store::SqliteStore;
+pub use store::{MemoryStore, Prune, Record, Store};
 
 use std::{
     collections::BTreeMap,

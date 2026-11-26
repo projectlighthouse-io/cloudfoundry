@@ -54,60 +54,80 @@ impl Store for MemoryStore {
     }
 }
 
-#[cfg(feature = "postgres")]
-mod postgres {
-    use sqlx::PgPool;
+/// Stores that can delete expired sessions, for `session:prune`.
+pub trait Prune: Store {
+    /// Delete expired sessions; returns how many.
+    fn prune(&self) -> impl Future<Output = Result<u64, Error>> + Send;
+}
 
-    use super::*;
+/// One store per SQL driver. Only the SQL text differs.
+#[allow(unused_macros)]
+macro_rules! sql_store {
+    ($(#[$m:meta])* $name:ident, $pool:ty, load: $load:literal, save: $save:literal, delete: $delete:literal, prune: $prune:literal) => {
+        $(#[$m])*
+        #[derive(Clone)]
+        pub struct $name($pool);
 
-    /// Sessions in the `sessions` table (`art publish session`).
-    #[derive(Clone)]
-    pub struct PostgresStore(PgPool);
-
-    impl PostgresStore {
-        pub fn new(pool: PgPool) -> Self {
-            Self(pool)
+        impl $name {
+            pub fn new(pool: $pool) -> Self {
+                Self(pool)
+            }
         }
 
-        /// Delete expired sessions. Returns how many. Run from `session:prune`,
-        /// not on the request path.
-        pub async fn prune(&self) -> Result<u64, sqlx::Error> {
-            let res = sqlx::query("delete from sessions where expires_at <= $1")
-                .bind(crate::unix_now())
-                .execute(&self.0)
-                .await?;
-            Ok(res.rows_affected())
-        }
-    }
+        impl Store for $name {
+            async fn load(&self, id: &SessionId) -> Result<Option<Record>, Error> {
+                let row: Option<(Vec<u8>, i64)> = sqlx::query_as($load).bind(id.as_str()).fetch_optional(&self.0).await?;
+                Ok(row.map(|(data, expires_at)| Record { id: id.clone(), data, expires_at }))
+            }
 
-    impl Store for PostgresStore {
-        async fn load(&self, id: &SessionId) -> Result<Option<Record>, Error> {
-            let row: Option<(Vec<u8>, i64)> = sqlx::query_as("select data, expires_at from sessions where id = $1")
-                .bind(id.as_str())
-                .fetch_optional(&self.0)
-                .await?;
-            Ok(row.map(|(data, expires_at)| Record { id: id.clone(), data, expires_at }))
+            async fn save(&self, r: &Record) -> Result<(), Error> {
+                sqlx::query($save).bind(r.id.as_str()).bind(&r.data).bind(r.expires_at).execute(&self.0).await?;
+                Ok(())
+            }
+
+            async fn delete(&self, id: &SessionId) -> Result<(), Error> {
+                sqlx::query($delete).bind(id.as_str()).execute(&self.0).await?;
+                Ok(())
+            }
         }
 
-        async fn save(&self, r: &Record) -> Result<(), Error> {
-            sqlx::query(
-                "insert into sessions (id, data, expires_at) values ($1, $2, $3)
-                 on conflict (id) do update set data = excluded.data, expires_at = excluded.expires_at",
-            )
-            .bind(r.id.as_str())
-            .bind(&r.data)
-            .bind(r.expires_at)
-            .execute(&self.0)
-            .await?;
-            Ok(())
+        impl Prune for $name {
+            async fn prune(&self) -> Result<u64, Error> {
+                Ok(sqlx::query($prune).bind(crate::unix_now()).execute(&self.0).await?.rows_affected())
+            }
         }
-
-        async fn delete(&self, id: &SessionId) -> Result<(), Error> {
-            sqlx::query("delete from sessions where id = $1").bind(id.as_str()).execute(&self.0).await?;
-            Ok(())
-        }
-    }
+    };
 }
 
 #[cfg(feature = "postgres")]
-pub use postgres::PostgresStore;
+sql_store!(
+    /// Sessions in Postgres (`art publish session`).
+    PostgresStore, sqlx::PgPool,
+    load: "select data, expires_at from sessions where id = $1",
+    save: "insert into sessions (id, data, expires_at) values ($1, $2, $3)
+           on conflict (id) do update set data = excluded.data, expires_at = excluded.expires_at",
+    delete: "delete from sessions where id = $1",
+    prune: "delete from sessions where expires_at <= $1"
+);
+
+#[cfg(feature = "sqlite")]
+sql_store!(
+    /// Sessions in SQLite (`art publish session --driver sqlite`).
+    SqliteStore, sqlx::SqlitePool,
+    load: "select data, expires_at from sessions where id = ?",
+    save: "insert into sessions (id, data, expires_at) values (?, ?, ?)
+           on conflict (id) do update set data = excluded.data, expires_at = excluded.expires_at",
+    delete: "delete from sessions where id = ?",
+    prune: "delete from sessions where expires_at <= ?"
+);
+
+#[cfg(feature = "mysql")]
+sql_store!(
+    /// Sessions in MySQL 8 or MariaDB (`art publish session --driver mysql`).
+    MysqlStore, sqlx::MySqlPool,
+    load: "select data, expires_at from sessions where id = ?",
+    save: "insert into sessions (id, data, expires_at) values (?, ?, ?)
+           on duplicate key update data = values(data), expires_at = values(expires_at)",
+    delete: "delete from sessions where id = ?",
+    prune: "delete from sessions where expires_at <= ?"
+);
