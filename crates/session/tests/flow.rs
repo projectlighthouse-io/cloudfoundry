@@ -16,6 +16,15 @@ async fn count(s: Session) -> String {
     n.to_string()
 }
 
+async fn named(route::Form(f): route::Form<Named>) -> String {
+    f.name
+}
+
+#[derive(serde::Deserialize)]
+struct Named {
+    name: String,
+}
+
 async fn hook(_: ()) -> &'static str {
     "hooked"
 }
@@ -25,6 +34,7 @@ fn app(store: MemoryStore) -> Routes {
     r.get("/", |_: ()| async { "home" });
     r.post("/count", count);
     r.post("/hook", hook).name("hook");
+    r.post("/named", named);
     r.layer(session::layer(StoreRef(Arc::new(store)), Codec::new(Keys::parse(&Keys::generate()).unwrap())))
         .layer(csrf::layer::<Session>().except(["hook"]));
     r.build(()).unwrap()
@@ -69,6 +79,19 @@ impl Client {
         (status, text)
     }
 
+    async fn post_form(&mut self, uri: &str, form: &str) -> (StatusCode, String) {
+        let c: Vec<String> = self.jar.iter().map(|(k, v)| format!("{k}={v}")).collect();
+        let req = Request::post(uri)
+            .header(header::COOKIE, c.join("; "))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .body(body(form.to_owned()))
+            .unwrap();
+        let res = self.routes.handle(req).await;
+        self.remember(res.headers());
+        let status = res.status();
+        (status, String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap())
+    }
+
     fn remember(&mut self, headers: &HeaderMap) {
         for v in headers.get_all(header::SET_COOKIE) {
             let (k, v) = v.to_str().unwrap().split(';').next().unwrap().split_once('=').unwrap();
@@ -84,7 +107,6 @@ impl Client {
 
 #[tokio::test]
 async fn session_and_csrf_round_trip() {
-    let _ = body(""); // keep the import used across feature sets
     let mut c = Client { routes: app(MemoryStore::new()), jar: vec![] };
 
     assert_eq!(c.send(Method::GET, "/", false).await.0, StatusCode::OK);
@@ -93,6 +115,12 @@ async fn session_and_csrf_round_trip() {
     assert_eq!(c.send(Method::POST, "/count", false).await.0.as_u16(), 419, "no header");
     assert_eq!(c.send(Method::POST, "/count", true).await, (StatusCode::OK, "1".into()));
     assert_eq!(c.send(Method::POST, "/count", true).await, (StatusCode::OK, "2".into()), "session persisted");
+
+    // A plain HTML form sends the token as `_token`; the handler still gets the body.
+    let token = c.get("XSRF-TOKEN").unwrap();
+    assert_eq!(c.post_form("/named", &format!("_token={token}&name=ada")).await, (StatusCode::OK, "ada".into()));
+    assert_eq!(c.post_form("/named", "_token=wrong&name=ada").await.0.as_u16(), 419);
+    assert_eq!(c.post_form("/named", "name=ada").await.0.as_u16(), 419);
 
     let mut fresh = Client { routes: c.routes.clone(), jar: vec![] };
     assert_eq!(fresh.send(Method::POST, "/hook", false).await.1, "hooked", "exempt route");

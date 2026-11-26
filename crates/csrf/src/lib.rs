@@ -2,8 +2,8 @@
 //!
 //! One token per session. Unsafe methods (`POST`, `PUT`, `PATCH`, `DELETE`)
 //! must echo it in `X-XSRF-TOKEN` (what the Inertia v3 client sends, read from
-//! the `XSRF-TOKEN` cookie this layer sets) or `X-CSRF-TOKEN`. A failure is a
-//! bare `419`.
+//! the `XSRF-TOKEN` cookie this layer sets), `X-CSRF-TOKEN`, or, for a plain
+//! HTML form, a `_token` field. A failure is a bare `419`.
 //!
 //! ```ignore
 //! router
@@ -20,6 +20,7 @@ use std::{
 };
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::Bytes;
 use http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header};
 use tower::{Layer, Service};
 
@@ -89,8 +90,8 @@ where
     S: Service<Request<ReqB>, Response = Response<ResB>> + Clone + Send + 'static,
     S::Future: Send,
     T: TokenStore + Clone + Send + Sync + 'static,
-    ReqB: Send + 'static,
-    ResB: Default,
+    ReqB: FormBody,
+    ResB: Default + Send + 'static,
 {
     type Response = Response<ResB>;
     type Error = S::Error;
@@ -122,13 +123,33 @@ where
         });
 
         let unsafe_method = !matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS | Method::TRACE);
-        if unsafe_method && !HEADERS.iter().any(|h| header_value(req.headers(), h).is_some_and(|v| ct_eq(v, &token))) {
-            // 419 is Laravel's "page expired"; Inertia clients know it.
-            return Box::pin(async { Ok(status(StatusCode::from_u16(419).expect("valid status"))) });
+        let header_ok = HEADERS.iter().any(|h| header_value(req.headers(), h).is_some_and(|v| ct_eq(v, &token)));
+        let form = req
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.split(';').next().is_some_and(|m| m.trim().eq_ignore_ascii_case("application/x-www-form-urlencoded")));
+        // 419 is Laravel's "page expired"; Inertia clients know it.
+        let expired = || Ok(status(StatusCode::from_u16(419).expect("valid status")));
+        if unsafe_method && !header_ok && !form {
+            return Box::pin(async move { expired() });
         }
 
         let needs_cookie = cookie(req.headers(), COOKIE) != Some(token.as_str());
         Box::pin(async move {
+            let req = if unsafe_method && !header_ok {
+                // A plain HTML form: the token is the `_token` field. Read the body,
+                // check it, and hand the same bytes on.
+                let (parts, body) = req.into_parts();
+                let Some(bytes) = read_limited(body).await else { return expired() };
+                let field = form_field(&bytes, "_token");
+                if !field.is_some_and(|f| ct_eq(&f, &token)) {
+                    return expired();
+                }
+                Request::from_parts(parts, ReqB::from_bytes(bytes))
+            } else {
+                req
+            };
             let mut res = inner.call(req).await?;
             if needs_cookie {
                 let secure = if secure { "; Secure" } else { "" };
@@ -154,6 +175,47 @@ impl<S, T> Csrf<S, T> {
     fn exempt<B>(&self, _: &Request<B>) -> bool {
         false
     }
+}
+
+/// A request body the layer can read and rebuild, to find `_token` in a form.
+/// Implemented for `route::Body` (feature `route`) and `Full<Bytes>`.
+pub trait FormBody: http_body::Body<Data = Bytes> + Send + Unpin + Sized + 'static {
+    fn from_bytes(bytes: Bytes) -> Self;
+}
+
+impl FormBody for http_body_util::Full<Bytes> {
+    fn from_bytes(bytes: Bytes) -> Self {
+        http_body_util::Full::new(bytes)
+    }
+}
+
+#[cfg(feature = "route")]
+impl FormBody for route::Body {
+    fn from_bytes(bytes: Bytes) -> Self {
+        route::body(bytes)
+    }
+}
+
+/// Largest form body read for `_token`. Larger forms must send the header.
+const FORM_LIMIT: usize = 2 * 1024 * 1024;
+
+async fn read_limited<B: FormBody>(mut body: B) -> Option<Bytes> {
+    use http_body_util::BodyExt;
+    let mut buf = Vec::new();
+    while let Some(frame) = body.frame().await {
+        if let Ok(data) = frame.ok()?.into_data() {
+            if buf.len() + data.len() > FORM_LIMIT {
+                return None;
+            }
+            buf.extend_from_slice(&data);
+        }
+    }
+    Some(buf.into())
+}
+
+fn form_field(body: &[u8], name: &str) -> Option<String> {
+    let pairs: Vec<(String, String)> = serde_urlencoded::from_bytes(body).ok()?;
+    pairs.into_iter().find(|(k, _)| k == name).map(|(_, v)| v)
 }
 
 fn status<B: Default>(s: StatusCode) -> Response<B> {
