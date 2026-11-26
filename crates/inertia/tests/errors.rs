@@ -49,6 +49,22 @@ async fn validation_failure_redirects_back_with_first_errors() {
     let page = r.handle(get).await.into_body().collect().await.unwrap().to_bytes();
     assert!(String::from_utf8_lossy(&page).contains(r#""errors":{"name":"This field is required."}"#), "first message per field");
 
+    // With an error bag, the errors arrive under its name.
+    let bagged = Request::builder()
+        .method(Method::POST)
+        .uri("/save")
+        .header("x-inertia", "true")
+        .header("x-inertia-error-bag", "createCompany")
+        .header(header::COOKIE, &cookie)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(body(r#"{"name":"ab"}"#))
+        .unwrap();
+    let res = r.handle(bagged).await;
+    let cookie = res.headers().get(header::SET_COOKIE).map(|c| c.to_str().unwrap().split(';').next().unwrap().to_owned()).unwrap_or(cookie);
+    let get = Request::get("/form").header("x-inertia", "true").header(header::COOKIE, &cookie).body(route::empty()).unwrap();
+    let page = r.handle(get).await.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&page).contains(r#""errors":{"createCompany":{"name":"Must be at least 3 characters."}}"#), "{}", String::from_utf8_lossy(&page));
+
     // Without X-Inertia the plain 422 stays.
     let plain = Request::post("/save").header(header::CONTENT_TYPE, "application/json").body(body(r#"{"name":""}"#)).unwrap();
     assert_eq!(r.handle(plain).await.status(), StatusCode::UNPROCESSABLE_ENTITY);

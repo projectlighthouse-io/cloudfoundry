@@ -21,6 +21,7 @@ type Share = Arc<dyn Fn(&Extensions) -> Result<Vec<u8>, serde_json::Error> + Sen
 
 #[derive(Clone)]
 struct Config {
+    pages: Option<Arc<str>>,
     root: Arc<str>,
     version: Arc<str>,
     head: Option<Head>,
@@ -36,7 +37,7 @@ pub struct InertiaLayer {
 
 pub fn layer() -> InertiaLayer {
     InertiaLayer {
-        cfg: Config { root: DEFAULT_ROOT.into(), version: "".into(), head: None, share: None },
+        cfg: Config { pages: None, root: DEFAULT_ROOT.into(), version: "".into(), head: None, share: None },
     }
 }
 
@@ -54,6 +55,14 @@ impl InertiaLayer {
         let html = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("inertia root template {path}: {e}"));
         assert!(html.contains("{{ inertia }}"), "inertia root template {path} has no `{{{{ inertia }}}}`");
         self.cfg.root = html.into();
+        self
+    }
+
+    /// In debug builds, check that `<dir>/<component>.vue` exists before
+    /// rendering, so a typo in a component name is a clear error, not a blank
+    /// page. Release builds skip the check.
+    pub fn pages_dir(mut self, dir: &str) -> Self {
+        self.cfg.pages = Some(dir.trim_end_matches('/').into());
         self
     }
 
@@ -145,6 +154,14 @@ where
                 return Ok(vary(res));
             };
 
+            if let Some(dir) = cfg.pages.as_deref().filter(|_| cfg!(debug_assertions)) {
+                let file = format!("{dir}/{}.vue", rendered.component);
+                if !std::path::Path::new(&file).exists() {
+                    tracing::error!("page component `{}` not found at {file}", rendered.component);
+                    return Ok(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+                }
+            }
+
             let shared = match (&cfg.share, &shared_ext) {
                 (Some(f), Some(ext)) => f(ext).ok(),
                 _ => None,
@@ -199,12 +216,31 @@ struct PageJson<'a> {
     version: &'a str,
     #[serde(rename = "deferredProps", skip_serializing_if = "BTreeMap::is_empty")]
     deferred: BTreeMap<&'a str, Vec<&'a str>>,
+    #[serde(rename = "mergeProps", skip_serializing_if = "Vec::is_empty")]
+    merge: Vec<&'a str>,
+    #[serde(rename = "prependProps", skip_serializing_if = "Vec::is_empty")]
+    prepend: Vec<&'a str>,
+    #[serde(rename = "deepMergeProps", skip_serializing_if = "Vec::is_empty")]
+    deep_merge: Vec<&'a str>,
+    #[serde(rename = "matchPropsOn", skip_serializing_if = "Vec::is_empty")]
+    match_on: Vec<String>,
+    #[serde(rename = "onceProps", skip_serializing_if = "BTreeMap::is_empty")]
+    once: BTreeMap<&'a str, OnceEntry<'a>>,
+}
+
+#[derive(Serialize)]
+struct OnceEntry<'a> {
+    prop: &'a str,
+    #[serde(rename = "expiresAt")]
+    expires_at: Option<u64>,
 }
 
 enum Kind<'a> {
     Regular,
     Optional,
     Defer(&'a str),
+    Merge { mode: &'a str, match_on: Vec<&'a str>, value: &'a RawValue },
+    Once { value: Option<&'a RawValue>, expires_at: Option<u64> },
 }
 
 fn kind(raw: &RawValue) -> Kind<'_> {
@@ -212,8 +248,12 @@ fn kind(raw: &RawValue) -> Kind<'_> {
         return Kind::Regular;
     }
     match serde_json::from_str::<Marker>(raw.get()) {
-        Ok(Marker { kind: "defer", group }) => Kind::Defer(group.unwrap_or("default")),
+        Ok(Marker { kind: "defer", group, .. }) => Kind::Defer(group.unwrap_or("default")),
         Ok(Marker { kind: "optional", .. }) => Kind::Optional,
+        Ok(Marker { kind: "merge", mode, match_on, value: Some(value), .. }) => {
+            Kind::Merge { mode: mode.unwrap_or("append"), match_on: match_on.unwrap_or_default(), value }
+        }
+        Ok(Marker { kind: "once", value, expires_at, .. }) => Kind::Once { value, expires_at },
         _ => Kind::Regular,
     }
 }
@@ -243,24 +283,53 @@ fn page_json(
 
     // A partial reload for another component is a full visit.
     let partial = partial.filter(|p| p.component == r.component);
-    let mut props = BTreeMap::new();
-    let mut deferred: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let selected = |key: &str| partial.as_ref().is_none_or(|p| p.selects(key));
+    let reset = |key: &str| partial.as_ref().is_some_and(|p| p.reset.iter().any(|k| k == key));
+    let mut page = PageJson {
+        component: &r.component,
+        props: BTreeMap::new(),
+        url,
+        version,
+        deferred: BTreeMap::new(),
+        merge: vec![],
+        prepend: vec![],
+        deep_merge: vec![],
+        match_on: vec![],
+        once: BTreeMap::new(),
+    };
     for (key, raw) in all {
-        let include = match (kind(raw), &partial) {
-            (_, _) if key == "errors" => true, // always prop
-            (Kind::Regular, None) => true,
-            (Kind::Regular, Some(p)) => p.selects(key),
-            (Kind::Defer(group), None) => {
-                deferred.entry(group).or_default().push(key);
-                false
+        if key == "errors" {
+            page.props.insert(key, raw); // always prop
+            continue;
+        }
+        match kind(raw) {
+            Kind::Regular if selected(key) => {
+                page.props.insert(key, raw);
             }
-            (Kind::Optional, _) | (Kind::Defer(_), Some(_)) => false,
-        };
-        if include {
-            props.insert(key, raw);
+            Kind::Defer(group) if partial.is_none() => page.deferred.entry(group).or_default().push(key),
+            Kind::Merge { mode, match_on, value } if selected(key) => {
+                page.props.insert(key, value);
+                // A reset prop is sent plain, so the client replaces it.
+                if !reset(key) {
+                    match mode {
+                        "prepend" => page.prepend.push(key),
+                        "deep" => page.deep_merge.push(key),
+                        _ => page.merge.push(key),
+                    }
+                    page.match_on.extend(match_on.iter().map(|f| format!("{key}.{f}")));
+                }
+            }
+            Kind::Once { value, expires_at } => {
+                // Announced either way, so the client keeps remembering it.
+                page.once.insert(key, OnceEntry { prop: key, expires_at });
+                if let Some(v) = value.filter(|_| selected(key)) {
+                    page.props.insert(key, v);
+                }
+            }
+            _ => {}
         }
     }
-    serde_json::to_vec(&PageJson { component: &r.component, props, url, version, deferred })
+    serde_json::to_vec(&page)
 }
 
 fn html(cfg: &Config, page: &[u8]) -> String {
@@ -291,6 +360,8 @@ mod errors {
         session: Option<Session>,
         referer: Option<String>,
         inertia: bool,
+        /// `X-Inertia-Error-Bag`: the form's errors go under this name.
+        bag: Option<String>,
     }
 
     impl Back {
@@ -299,6 +370,7 @@ mod errors {
                 session: req.extensions().get::<Session>().cloned(),
                 referer: req.headers().get(header::REFERER).and_then(|v| v.to_str().ok()).map(str::to_owned),
                 inertia,
+                bag: req.headers().get("x-inertia-error-bag").and_then(|v| v.to_str().ok()).map(str::to_owned),
             }
         }
 
@@ -309,12 +381,16 @@ mod errors {
                 return None;
             };
             let first: BTreeMap<&str, &str> = errors.iter().filter_map(|(f, m)| Some((f, m.first()?.as_ref()))).collect();
-            session.flash(KEY, &first).ok()?;
+            match &self.bag {
+                Some(bag) => session.flash(KEY, &BTreeMap::from([(bag.as_str(), first)])).ok()?,
+                None => session.flash(KEY, &first).ok()?,
+            }
             Some(Redirect::to(self.referer.clone().unwrap_or_else(|| "/".into())).into_response())
         }
 
         pub(super) fn flashed_errors(&self) -> Option<Box<RawValue>> {
-            let errors: BTreeMap<String, String> = self.session.as_ref()?.get(KEY).ok()??;
+            // A flat map, or one wrapped in its error bag's name.
+            let errors: serde_json::Value = self.session.as_ref()?.get(KEY).ok()??;
             serde_json::value::to_raw_value(&errors).ok()
         }
     }

@@ -77,6 +77,20 @@ pub(crate) struct Marker<'a> {
     pub(crate) kind: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) group: Option<&'a str>,
+    #[serde(default, borrow, skip_serializing)]
+    pub(crate) mode: Option<&'a str>,
+    #[serde(default, borrow, rename = "match", skip_serializing)]
+    pub(crate) match_on: Option<Vec<&'a str>>,
+    #[serde(default, borrow, skip_serializing)]
+    pub(crate) value: Option<&'a serde_json::value::RawValue>,
+    #[serde(default, rename = "expiresAt", skip_serializing)]
+    pub(crate) expires_at: Option<u64>,
+}
+
+impl<'a> Marker<'a> {
+    fn of(kind: &'a str, group: Option<&'a str>) -> Self {
+        Marker { kind, group, mode: None, match_on: None, value: None, expires_at: None }
+    }
 }
 
 pub(crate) const MARKER_PREFIX: &str = r#"{"$inertia":"#;
@@ -104,7 +118,7 @@ impl<T: Serialize> Serialize for Optional<T> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match &self.0 {
             Some(v) => v.serialize(s),
-            None => Marker { kind: "optional", group: None }.serialize(s),
+            None => Marker::of("optional", None).serialize(s),
         }
     }
 }
@@ -140,8 +154,87 @@ impl<T: Serialize> Serialize for Defer<T> {
     fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match &self.value {
             Some(v) => v.serialize(s),
-            None => Marker { kind: "defer", group: Some(self.group) }.serialize(s),
+            None => Marker::of("defer", Some(self.group)).serialize(s),
         }
+    }
+}
+
+/// A prop the client merges into what it has on partial reloads (infinite
+/// lists, chat logs). A full visit replaces it as usual.
+pub struct Merge<T> {
+    value: T,
+    mode: &'static str,
+    match_on: Vec<&'static str>,
+}
+
+impl<T> Merge<T> {
+    /// Append (the default for lists).
+    pub fn new(value: T) -> Self {
+        Merge { value, mode: "append", match_on: vec![] }
+    }
+    pub fn prepend(mut self) -> Self {
+        self.mode = "prepend";
+        self
+    }
+    /// Merge nested objects all the way down.
+    pub fn deep(mut self) -> Self {
+        self.mode = "deep";
+        self
+    }
+    /// Update items with the same `field` in place instead of appending a copy.
+    /// For a nested list, a path: `data.id`.
+    pub fn match_on(mut self, field: &'static str) -> Self {
+        self.match_on.push(field);
+        self
+    }
+}
+
+impl<T: Serialize> Serialize for Merge<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut m = s.serialize_struct("Merge", 4)?;
+        m.serialize_field("$inertia", "merge")?;
+        m.serialize_field("mode", self.mode)?;
+        m.serialize_field("match", &self.match_on)?;
+        m.serialize_field("value", &self.value)?;
+        m.end()
+    }
+}
+
+/// A prop the client remembers across visits: sent once, then skipped while
+/// the client still has it (`X-Inertia-Except-Once-Props`). Build it with
+/// [`Visit::once`] so the work is skipped too.
+pub struct Once<T> {
+    value: Option<T>,
+    expires_at: Option<u64>,
+}
+
+impl<T> Once<T> {
+    pub fn loaded(value: T) -> Self {
+        Once { value: Some(value), expires_at: None }
+    }
+    pub fn skipped() -> Self {
+        Once { value: None, expires_at: None }
+    }
+    /// Refresh after this time (milliseconds since the Unix epoch).
+    pub fn until(mut self, expires_at_ms: u64) -> Self {
+        self.expires_at = Some(expires_at_ms);
+        self
+    }
+}
+
+impl<T: Serialize> Serialize for Once<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut m = s.serialize_struct("Once", 3)?;
+        m.serialize_field("$inertia", "once")?;
+        if let Some(v) = &self.value {
+            m.serialize_field("value", v)?;
+        }
+        if let Some(e) = self.expires_at {
+            m.serialize_field("expiresAt", &e)?;
+        }
+        m.end()
     }
 }
 
@@ -151,6 +244,8 @@ pub(crate) struct Partial {
     pub(crate) component: String,
     pub(crate) only: Option<Vec<String>>,
     pub(crate) except: Vec<String>,
+    /// Props the client resets: sent again without a merge label.
+    pub(crate) reset: Vec<String>,
 }
 
 impl Partial {
@@ -161,6 +256,7 @@ impl Partial {
             component: get("x-inertia-partial-component")?.to_owned(),
             only: get("x-inertia-partial-data").map(list),
             except: get("x-inertia-partial-except").map(list).unwrap_or_default(),
+            reset: get("x-inertia-reset").map(list).unwrap_or_default(),
         })
     }
 
@@ -177,6 +273,8 @@ impl Partial {
 #[derive(Clone, Debug, Default)]
 pub struct Visit {
     partial: Option<Partial>,
+    /// Once props the client still has.
+    except_once: Vec<String>,
 }
 
 impl Visit {
@@ -190,6 +288,16 @@ impl Visit {
         if self.wants(key) { Optional::loaded(load.await) } else { Optional::new() }
     }
 
+    /// Run `load` unless the client still has once prop `key`. A partial
+    /// reload that asks for it always loads it.
+    pub async fn once<T>(&self, key: &str, load: impl Future<Output = T>) -> Once<T> {
+        let needed = match &self.partial {
+            Some(p) => p.selects(key),
+            None => !self.except_once.iter().any(|k| k == key),
+        };
+        if needed { Once::loaded(load.await) } else { Once::skipped() }
+    }
+
     /// Run `load` only on the follow-up request that fetches deferred `key`.
     pub async fn defer<T>(&self, key: &str, load: impl Future<Output = T>) -> Defer<T> {
         if self.wants(key) { Defer::loaded(load.await) } else { Defer::new() }
@@ -199,7 +307,11 @@ impl Visit {
 impl<S: Send + Sync> FromRequestParts<S> for Visit {
     async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         let inertia = parts.headers.contains_key("x-inertia");
-        Ok(Visit { partial: inertia.then(|| Partial::from_headers(&parts.headers)).flatten() })
+        let except_once = match parts.headers.get("x-inertia-except-once-props").and_then(|v| v.to_str().ok()) {
+            Some(v) if inertia => v.split(',').map(|k| k.trim().to_owned()).filter(|k| !k.is_empty()).collect(),
+            _ => vec![],
+        };
+        Ok(Visit { partial: inertia.then(|| Partial::from_headers(&parts.headers)).flatten(), except_once })
     }
 }
 
@@ -219,6 +331,7 @@ mod tests {
             component: "c".into(),
             only: only.map(|o| o.iter().map(|s| s.to_string()).collect()),
             except: except.iter().map(|s| s.to_string()).collect(),
+            reset: vec![],
         };
         assert!(p(None, &[]).selects("a"));
         assert!(p(Some(&["a"]), &[]).selects("a") && !p(Some(&["a"]), &[]).selects("b"));

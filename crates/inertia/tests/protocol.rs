@@ -1,5 +1,5 @@
 use http_body_util::BodyExt;
-use inertia::{Defer, Optional, Page, Visit};
+use inertia::{Defer, Merge, Once, Optional, Page, Visit};
 use route::{
     Router, Routes, empty,
     http::{HeaderMap, Method, Request, StatusCode, header},
@@ -106,4 +106,65 @@ async fn version_mismatch_and_redirects() {
 
     assert_eq!(send(&app(), Method::PUT, "/runs/1", &[INERTIA, V1]).await.0, StatusCode::SEE_OTHER, "302 after PUT");
     assert_eq!(send(&app(), Method::GET, "/plain", &[INERTIA, V1]).await.2, "plain", "non-page passes through");
+}
+
+#[derive(Serialize)]
+struct Feed {
+    items: Merge<Vec<u32>>,
+    plans: Once<Vec<&'static str>>,
+}
+
+async fn feed(visit: Visit) -> Page<Feed> {
+    inertia::render(
+        "feed",
+        Feed {
+            items: Merge::new(vec![1, 2]).match_on("id"),
+            plans: visit.once("plans", async { vec!["pro"] }).await,
+        },
+    )
+}
+
+fn feed_app(pages: Option<&str>) -> Routes {
+    let mut r = Router::new();
+    r.get("/feed", feed);
+    let mut l = inertia::layer().version("v1");
+    if let Some(dir) = pages {
+        l = l.pages_dir(dir);
+    }
+    r.layer(l);
+    r.build(()).unwrap()
+}
+
+#[tokio::test]
+async fn merge_and_once_props() {
+    let app = feed_app(None);
+    let full = send(&app, Method::GET, "/feed", &[INERTIA, V1]).await.2;
+    assert_eq!(
+        full,
+        r#"{"component":"feed","props":{"errors":{},"items":[1,2],"plans":["pro"]},"url":"/feed","version":"v1","mergeProps":["items"],"matchPropsOn":["items.id"],"onceProps":{"plans":{"prop":"plans","expiresAt":null}}}"#
+    );
+
+    // The client still has `plans`: skipped, but still announced.
+    let has = [INERTIA, V1, ("x-inertia-except-once-props", "plans")];
+    let json = send(&app, Method::GET, "/feed", &has).await.2;
+    assert!(json.contains(r#""props":{"errors":{},"items":[1,2]}"#) && json.contains(r#""onceProps":{"plans""#), "{json}");
+
+    // A partial reload asking for it always gets it, despite the except-once header.
+    let ask = [INERTIA, V1, ("x-inertia-except-once-props", "plans"), ("x-inertia-partial-component", "feed"), ("x-inertia-partial-data", "plans")];
+    assert!(send(&app, Method::GET, "/feed", &ask).await.2.contains(r#""props":{"errors":{},"plans":["pro"]}"#));
+
+    // A reset prop comes back without its merge label.
+    let reset = [INERTIA, V1, ("x-inertia-partial-component", "feed"), ("x-inertia-partial-data", "items"), ("x-inertia-reset", "items")];
+    let json = send(&app, Method::GET, "/feed", &reset).await.2;
+    assert!(json.contains(r#""items":[1,2]"#) && !json.contains("mergeProps") && !json.contains("matchPropsOn"), "{json}");
+}
+
+#[tokio::test]
+async fn missing_page_component_is_an_error_in_dev() {
+    let dir = std::env::temp_dir().join(format!("inertia-pages-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let app = feed_app(Some(dir.to_str().unwrap()));
+    assert_eq!(send(&app, Method::GET, "/feed", &[INERTIA, V1]).await.0, StatusCode::INTERNAL_SERVER_ERROR);
+    std::fs::write(dir.join("feed.vue"), "").unwrap();
+    assert_eq!(send(&app, Method::GET, "/feed", &[INERTIA, V1]).await.0, StatusCode::OK);
 }
