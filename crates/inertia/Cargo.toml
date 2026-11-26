@@ -23,7 +23,9 @@ validate = { path = "../validate", optional = true }
 [features]
 # On an Inertia visit, a validation failure redirects back and the errors
 # arrive as `props.errors` on the next page (flashed through the session).
-validate = ["dep:validate", "dep:session"]
+validate = ["dep:validate", "session"]
+# `inertia::clear_history(&session)`: clear the browser's history on the next page (logout).
+session = ["dep:session"]
 # Server-side rendering through the Inertia SSR server (`node bootstrap/ssr/ssr.js`).
 ssr = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tokio"]
 

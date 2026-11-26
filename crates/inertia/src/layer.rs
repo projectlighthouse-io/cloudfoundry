@@ -21,6 +21,7 @@ type Share = Arc<dyn Fn(&Extensions) -> Result<Vec<u8>, serde_json::Error> + Sen
 
 #[derive(Clone)]
 struct Config {
+    encrypt_history: bool,
     #[cfg(feature = "ssr")]
     ssr: Option<Arc<crate::ssr::Ssr>>,
     pages: Option<Arc<str>>,
@@ -40,6 +41,7 @@ pub struct InertiaLayer {
 pub fn layer() -> InertiaLayer {
     InertiaLayer {
         cfg: Config {
+            encrypt_history: false,
             #[cfg(feature = "ssr")]
             ssr: None,
             pages: None,
@@ -89,6 +91,13 @@ impl InertiaLayer {
             s.timeout = timeout;
             self.cfg.ssr = Some(Arc::new(s));
         }
+        self
+    }
+
+    /// Encrypt every page in the browser's history (`Page::encrypt_history`
+    /// overrides per page). Pair with `inertia::clear_history` on logout.
+    pub fn encrypt_history(mut self, encrypt: bool) -> Self {
+        self.cfg.encrypt_history = encrypt;
         self
     }
 
@@ -160,6 +169,8 @@ where
         let shared_ext = cfg.share.is_some().then(|| req.extensions().clone());
         #[cfg(feature = "validate")]
         let back = errors::Back::capture(&req, inertia);
+        #[cfg(feature = "session")]
+        let session = req.extensions().get::<session::Session>().cloned();
 
         Box::pin(async move {
             let mut res = inner.call(req).await?;
@@ -192,7 +203,15 @@ where
                 (Some(f), Some(ext)) => f(ext).ok(),
                 _ => None,
             };
-            let page = match page_json(&rendered, &url, &cfg.version, partial, shared.as_deref(), errors) {
+            #[cfg(feature = "session")]
+            let cleared = session.is_some_and(|s| s.get::<bool>(crate::CLEAR_HISTORY_KEY).ok().flatten().unwrap_or(false));
+            #[cfg(not(feature = "session"))]
+            let cleared = false;
+            let history = History {
+                encrypt: rendered.encrypt_history.unwrap_or(cfg.encrypt_history),
+                clear: rendered.clear_history || cleared,
+            };
+            let page = match page_json(&rendered, &url, &cfg.version, partial, shared.as_deref(), errors, history) {
                 Ok(p) => p,
                 Err(e) => {
                     tracing::error!("page `{}` could not be built: {e}", rendered.component);
@@ -201,7 +220,7 @@ where
             };
 
             let (mut parts, _) = res.into_parts();
-            if parts.status == StatusCode::INTERNAL_SERVER_ERROR {
+            if parts.status.as_u16() == crate::PENDING {
                 parts.status = StatusCode::OK;
             }
             let body = if inertia {
@@ -258,6 +277,31 @@ struct PageJson<'a> {
     match_on: Vec<String>,
     #[serde(rename = "onceProps", skip_serializing_if = "BTreeMap::is_empty")]
     once: BTreeMap<&'a str, OnceEntry<'a>>,
+    #[serde(rename = "scrollProps", skip_serializing_if = "BTreeMap::is_empty")]
+    scroll: BTreeMap<&'a str, ScrollEntry<'a>>,
+    #[serde(rename = "encryptHistory", skip_serializing_if = "std::ops::Not::not")]
+    encrypt_history: bool,
+    #[serde(rename = "clearHistory", skip_serializing_if = "std::ops::Not::not")]
+    clear_history: bool,
+}
+
+#[derive(Serialize)]
+struct ScrollEntry<'a> {
+    #[serde(rename = "pageName")]
+    page_name: &'a str,
+    #[serde(rename = "previousPage")]
+    previous_page: Option<u64>,
+    #[serde(rename = "nextPage")]
+    next_page: Option<u64>,
+    #[serde(rename = "currentPage")]
+    current_page: Option<u64>,
+    reset: bool,
+}
+
+#[derive(Clone, Copy)]
+struct History {
+    encrypt: bool,
+    clear: bool,
 }
 
 #[derive(Serialize)]
@@ -272,6 +316,7 @@ enum Kind<'a> {
     Optional,
     Defer(&'a str),
     Merge { mode: &'a str, match_on: Vec<&'a str>, value: &'a RawValue },
+    Scroll { value: &'a RawValue, page_name: &'a str, previous: Option<u64>, next: Option<u64>, current: Option<u64>, match_on: Vec<&'a str> },
     Once { value: Option<&'a RawValue>, expires_at: Option<u64> },
 }
 
@@ -286,6 +331,14 @@ fn kind(raw: &RawValue) -> Kind<'_> {
             Kind::Merge { mode: mode.unwrap_or("append"), match_on: match_on.unwrap_or_default(), value }
         }
         Ok(Marker { kind: "once", value, expires_at, .. }) => Kind::Once { value, expires_at },
+        Ok(Marker { kind: "scroll", value: Some(value), page_name, previous_page, next_page, current_page, match_on, .. }) => Kind::Scroll {
+            value,
+            page_name: page_name.unwrap_or("page"),
+            previous: previous_page,
+            next: next_page,
+            current: current_page,
+            match_on: match_on.unwrap_or_default(),
+        },
         _ => Kind::Regular,
     }
 }
@@ -305,6 +358,7 @@ fn page_json(
     partial: Option<Partial>,
     shared: Option<&[u8]>,
     errors: Option<Box<RawValue>>,
+    history: History,
 ) -> Result<Vec<u8>, serde_json::Error> {
     let empty: &RawValue = serde_json::from_str("{}")?;
     let errors_raw = errors.as_deref().unwrap_or(empty);
@@ -328,7 +382,11 @@ fn page_json(
         deep_merge: vec![],
         match_on: vec![],
         once: BTreeMap::new(),
+        scroll: BTreeMap::new(),
+        encrypt_history: history.encrypt,
+        clear_history: history.clear,
     };
+    let prepend = partial.as_ref().is_some_and(|p| p.prepend);
     for (key, raw) in all {
         if key == "errors" {
             page.props.insert(key, raw); // always prop
@@ -348,6 +406,15 @@ fn page_json(
                         "deep" => page.deep_merge.push(key),
                         _ => page.merge.push(key),
                     }
+                    page.match_on.extend(match_on.iter().map(|f| format!("{key}.{f}")));
+                }
+            }
+            Kind::Scroll { value, page_name, previous, next, current, match_on } if selected(key) => {
+                page.props.insert(key, value);
+                let reset = reset(key);
+                page.scroll.insert(key, ScrollEntry { page_name, previous_page: previous, next_page: next, current_page: current, reset });
+                if !reset {
+                    if prepend { page.prepend.push(key) } else { page.merge.push(key) }
                     page.match_on.extend(match_on.iter().map(|f| format!("{key}.{f}")));
                 }
             }

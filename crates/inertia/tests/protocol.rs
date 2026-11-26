@@ -168,3 +168,66 @@ async fn missing_page_component_is_an_error_in_dev() {
     std::fs::write(dir.join("feed.vue"), "").unwrap();
     assert_eq!(send(&app, Method::GET, "/feed", &[INERTIA, V1]).await.0, StatusCode::OK);
 }
+
+#[derive(Serialize)]
+struct Log {
+    lines: inertia::Scroll<Vec<u64>>,
+}
+
+async fn log(route::Query(q): route::Query<std::collections::HashMap<String, u64>>) -> Page<Log> {
+    let page = q.get("page").copied().unwrap_or(2);
+    let lines = vec![page * 10, page * 10 + 1];
+    inertia::render(
+        "log",
+        Log { lines: inertia::Scroll::new(lines, page).previous(page.checked_sub(1).filter(|p| *p > 0)).next((page < 3).then_some(page + 1)).match_on("id") },
+    )
+}
+
+fn log_app() -> Routes {
+    let mut r = Router::new();
+    r.get("/log", log);
+    r.get("/secret", |_: ()| async { inertia::render("secret", ()).encrypt_history(true) });
+    r.get("/logout-done", |_: ()| async { inertia::render("home", ()).clear_history() });
+    r.get("/boom", |_: ()| async { (StatusCode::INTERNAL_SERVER_ERROR, inertia::render("errors/show", ())) });
+    r.layer(inertia::layer().version("v1"));
+    r.build(()).unwrap()
+}
+
+#[tokio::test]
+async fn scroll_props_for_infinite_scroll() {
+    let app = log_app();
+    let json = send(&app, Method::GET, "/log?page=2", &[INERTIA, V1]).await.2;
+    assert!(json.contains(r#""scrollProps":{"lines":{"pageName":"page","previousPage":1,"nextPage":3,"currentPage":2,"reset":false}}"#), "{json}");
+    assert!(json.contains(r#""mergeProps":["lines"]"#) && json.contains(r#""lines":[20,21]"#), "{json}");
+
+    // Scrolling back up asks to prepend.
+    let up = [INERTIA, V1, ("x-inertia-partial-component", "log"), ("x-inertia-partial-data", "lines"), ("x-inertia-infinite-scroll-merge-intent", "prepend")];
+    let json = send(&app, Method::GET, "/log?page=1", &up).await.2;
+    assert!(json.contains(r#""prependProps":["lines"]"#) && !json.contains("mergeProps") && json.contains(r#""nextPage":2"#), "{json}");
+
+    // Reset: no merge label, scrollProps says so.
+    let reset = [INERTIA, V1, ("x-inertia-partial-component", "log"), ("x-inertia-partial-data", "lines"), ("x-inertia-reset", "lines")];
+    let json = send(&app, Method::GET, "/log?page=1", &reset).await.2;
+    assert!(json.contains(r#""reset":true"#) && !json.contains("mergeProps") && !json.contains("prependProps"), "{json}");
+}
+
+#[tokio::test]
+async fn history_flags_and_real_statuses() {
+    let app = log_app();
+    let json = send(&app, Method::GET, "/secret", &[INERTIA, V1]).await.2;
+    assert!(json.contains(r#""encryptHistory":true"#) && !json.contains("clearHistory"), "{json}");
+    let json = send(&app, Method::GET, "/logout-done", &[INERTIA, V1]).await.2;
+    assert!(json.contains(r#""clearHistory":true"#) && !json.contains("encryptHistory"), "{json}");
+    let json = send(&app, Method::GET, "/log", &[INERTIA, V1]).await.2;
+    assert!(!json.contains("History"), "flags are omitted when false: {json}");
+
+    // A handler's own 500 stays a 500 and still renders the page.
+    let (status, _, json) = send(&app, Method::GET, "/boom", &[INERTIA, V1]).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(json.contains(r#""component":"errors/show""#), "{json}");
+
+    // Without the layer, a page is a loud 599.
+    let mut r = Router::new();
+    r.get("/", |_: ()| async { inertia::render("home", ()) });
+    assert_eq!(send(&r.build(()).unwrap(), Method::GET, "/", &[]).await.0.as_u16(), 599);
+}

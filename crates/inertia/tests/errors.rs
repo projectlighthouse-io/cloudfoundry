@@ -69,3 +69,31 @@ async fn validation_failure_redirects_back_with_first_errors() {
     let plain = Request::post("/save").header(header::CONTENT_TYPE, "application/json").body(body(r#"{"name":""}"#)).unwrap();
     assert_eq!(r.handle(plain).await.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn encrypt_globally_and_clear_after_logout() {
+    let mut r = Router::new();
+    r.get("/dashboard", |_: ()| async { inertia::render("dashboard", ()) });
+    r.post("/logout", |s: session::Session| async move {
+        inertia::clear_history(&s);
+        route::Redirect::to("/dashboard")
+    });
+    r.layer(session::layer(MemoryStore::new(), Codec::new(Keys::parse(&Keys::generate()).unwrap())))
+        .layer(inertia::layer().encrypt_history(true));
+    let r = r.build(()).unwrap();
+
+    let get = |cookie: Option<String>| {
+        let mut b = Request::get("/dashboard").header("x-inertia", "true");
+        if let Some(c) = cookie {
+            b = b.header(header::COOKIE, c);
+        }
+        b.body(route::empty()).unwrap()
+    };
+    let page = r.handle(get(None)).await.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&page).contains(r#""encryptHistory":true"#));
+
+    let res = r.handle(Request::post("/logout").body(route::empty()).unwrap()).await;
+    let cookie = res.headers()[header::SET_COOKIE].to_str().unwrap().split(';').next().unwrap().to_owned();
+    let page = r.handle(get(Some(cookie))).await.into_body().collect().await.unwrap().to_bytes();
+    assert!(String::from_utf8_lossy(&page).contains(r#""clearHistory":true"#), "{}", String::from_utf8_lossy(&page));
+}

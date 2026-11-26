@@ -39,29 +39,57 @@ use serde::{Serialize, Serializer};
 pub struct Page<P> {
     component: Cow<'static, str>,
     props: P,
+    encrypt_history: Option<bool>,
+    clear_history: bool,
 }
 
 /// `render("runs/show", props)`. The component name is the page's path under
 /// `resources/js/pages/`, without `.vue`.
 pub fn render<P: Serialize>(component: impl Into<Cow<'static, str>>, props: P) -> Page<P> {
-    Page { component: component.into(), props }
+    Page { component: component.into(), props, encrypt_history: None, clear_history: false }
 }
+
+impl<P> Page<P> {
+    /// Encrypt this page in the browser's history (overrides the layer's setting),
+    /// so its data cannot be read back after logout.
+    pub fn encrypt_history(mut self, encrypt: bool) -> Self {
+        self.encrypt_history = Some(encrypt);
+        self
+    }
+
+    /// Rotate the history encryption key, making earlier encrypted pages unreadable.
+    pub fn clear_history(mut self) -> Self {
+        self.clear_history = true;
+        self
+    }
+}
+
+/// The status a page carries until the layer renders it. Not a real status:
+/// a route without the layer answers 599, which is loud and unmistakable, and
+/// a handler that sets a real status (even 500) keeps it.
+pub(crate) const PENDING: u16 = 599;
 
 /// A serialized page waiting for the layer.
 #[derive(Clone)]
 pub(crate) struct Rendered {
     pub(crate) component: Cow<'static, str>,
     pub(crate) props: Arc<[u8]>,
+    pub(crate) encrypt_history: Option<bool>,
+    pub(crate) clear_history: bool,
 }
 
 impl<P: Serialize> IntoResponse for Page<P> {
-    /// Props serialize once, here, straight to bytes. The status is 500 until
-    /// the layer renders it, so a route without the layer fails loudly.
+    /// Props serialize once, here, straight to bytes.
     fn into_response(self) -> Response<Body> {
         match serde_json::to_vec(&self.props) {
             Ok(props) => {
-                let mut res = StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                res.extensions_mut().insert(Rendered { component: self.component, props: props.into() });
+                let mut res = StatusCode::from_u16(PENDING).expect("valid status").into_response();
+                res.extensions_mut().insert(Rendered {
+                    component: self.component,
+                    props: props.into(),
+                    encrypt_history: self.encrypt_history,
+                    clear_history: self.clear_history,
+                });
                 res
             }
             Err(e) => {
@@ -87,11 +115,30 @@ pub(crate) struct Marker<'a> {
     pub(crate) value: Option<&'a serde_json::value::RawValue>,
     #[serde(default, rename = "expiresAt", skip_serializing)]
     pub(crate) expires_at: Option<u64>,
+    #[serde(default, borrow, rename = "pageName", skip_serializing)]
+    pub(crate) page_name: Option<&'a str>,
+    #[serde(default, rename = "previousPage", skip_serializing)]
+    pub(crate) previous_page: Option<u64>,
+    #[serde(default, rename = "nextPage", skip_serializing)]
+    pub(crate) next_page: Option<u64>,
+    #[serde(default, rename = "currentPage", skip_serializing)]
+    pub(crate) current_page: Option<u64>,
 }
 
 impl<'a> Marker<'a> {
     fn of(kind: &'a str, group: Option<&'a str>) -> Self {
-        Marker { kind, group, mode: None, match_on: None, value: None, expires_at: None }
+        Marker {
+            kind,
+            group,
+            mode: None,
+            match_on: None,
+            value: None,
+            expires_at: None,
+            page_name: None,
+            previous_page: None,
+            next_page: None,
+            current_page: None,
+        }
     }
 }
 
@@ -240,6 +287,69 @@ impl<T: Serialize> Serialize for Once<T> {
     }
 }
 
+/// One page of a list for `<InfiniteScroll>`. The client asks for more with
+/// `?<page_name>=N` and merges the items in (appending, or prepending when it
+/// scrolls back); `scrollProps` tells it which pages exist.
+pub struct Scroll<T> {
+    items: T,
+    page_name: &'static str,
+    current: u64,
+    previous: Option<u64>,
+    next: Option<u64>,
+    match_on: Vec<&'static str>,
+}
+
+impl<T> Scroll<T> {
+    /// Page `current` of the list. Set `previous` / `next` when they exist.
+    pub fn new(items: T, current: u64) -> Self {
+        Scroll { items, page_name: "page", current, previous: None, next: None, match_on: vec![] }
+    }
+    /// The query parameter carrying the page number. Default `page`.
+    pub fn page_name(mut self, name: &'static str) -> Self {
+        self.page_name = name;
+        self
+    }
+    pub fn previous(mut self, page: Option<u64>) -> Self {
+        self.previous = page;
+        self
+    }
+    pub fn next(mut self, page: Option<u64>) -> Self {
+        self.next = page;
+        self
+    }
+    /// Update items with the same `field` in place instead of adding a copy.
+    pub fn match_on(mut self, field: &'static str) -> Self {
+        self.match_on.push(field);
+        self
+    }
+}
+
+impl<T: Serialize> Serialize for Scroll<T> {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut m = s.serialize_struct("Scroll", 7)?;
+        m.serialize_field("$inertia", "scroll")?;
+        m.serialize_field("pageName", self.page_name)?;
+        m.serialize_field("currentPage", &self.current)?;
+        m.serialize_field("previousPage", &self.previous)?;
+        m.serialize_field("nextPage", &self.next)?;
+        m.serialize_field("match", &self.match_on)?;
+        m.serialize_field("value", &self.items)?;
+        m.end()
+    }
+}
+
+/// Clear the browser's history encryption on the next page: call it on
+/// logout, before redirecting, so encrypted pages of the old session become
+/// unreadable through the back button.
+#[cfg(feature = "session")]
+pub fn clear_history(session: &session::Session) {
+    session.flash(CLEAR_HISTORY_KEY, &true).expect("a bool serializes");
+}
+
+#[cfg(feature = "session")]
+pub(crate) const CLEAR_HISTORY_KEY: &str = "_inertia_clear_history";
+
 /// A partial reload: the client wants some props of the page it is on.
 #[derive(Clone, Debug)]
 pub(crate) struct Partial {
@@ -248,6 +358,8 @@ pub(crate) struct Partial {
     pub(crate) except: Vec<String>,
     /// Props the client resets: sent again without a merge label.
     pub(crate) reset: Vec<String>,
+    /// `<InfiniteScroll>` loading an earlier page: prepend instead of append.
+    pub(crate) prepend: bool,
 }
 
 impl Partial {
@@ -259,6 +371,7 @@ impl Partial {
             only: get("x-inertia-partial-data").map(list),
             except: get("x-inertia-partial-except").map(list).unwrap_or_default(),
             reset: get("x-inertia-reset").map(list).unwrap_or_default(),
+            prepend: get("x-inertia-infinite-scroll-merge-intent").is_some_and(|v| v.eq_ignore_ascii_case("prepend")),
         })
     }
 
@@ -334,6 +447,7 @@ mod tests {
             only: only.map(|o| o.iter().map(|s| s.to_string()).collect()),
             except: except.iter().map(|s| s.to_string()).collect(),
             reset: vec![],
+            prepend: false,
         };
         assert!(p(None, &[]).selects("a"));
         assert!(p(Some(&["a"]), &[]).selects("a") && !p(Some(&["a"]), &[]).selects("b"));
