@@ -1,0 +1,19 @@
+[package]
+name = "db"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Typed pool handles and explicit transactions over sqlx"
+
+[dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+
+[features]
+postgres = ["sqlx/postgres"]
+mysql = ["sqlx/mysql"]
+sqlite = ["sqlx/sqlite"]
+# `Db::<H>::set_singleton` and `Db::<H>::singleton`.
+singleton = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
