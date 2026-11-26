@@ -1,0 +1,9 @@
+[package]
+name = "command"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Register and dispatch commands in the app binary"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
