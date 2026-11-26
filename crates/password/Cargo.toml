@@ -1,0 +1,10 @@
+[package]
+name = "password"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Hash and verify passwords with Argon2id"
+
+[dependencies]
+argon2 = { version = "0.5", features = ["std"] }
+getrandom = "0.3"
