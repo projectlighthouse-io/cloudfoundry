@@ -6,6 +6,7 @@ mod new;
 mod publish;
 
 use std::{
+    fs,
     io::ErrorKind,
     path::{Path, PathBuf},
     process::{Command, ExitCode},
@@ -51,6 +52,9 @@ enum Cli {
     /// View struct with a `From` stub in src/responses/.
     #[command(name = "make:response")]
     MakeResponse { name: String },
+    /// Command function and its arguments in src/commands/.
+    #[command(name = "make:command")]
+    MakeCommand { name: String },
     /// Job struct with `impl Job` in src/jobs/.
     #[command(name = "make:job")]
     MakeJob { name: String },
@@ -70,6 +74,9 @@ enum Cli {
     /// Copy a dependency's stub files into the app.
     Publish {
         package: String,
+        /// Database the stubs are for: `sqlite` or `mysql`. Default: Postgres.
+        #[arg(long)]
+        driver: Option<String>,
         /// Show what would be copied.
         #[arg(long)]
         list: bool,
@@ -102,8 +109,9 @@ fn main() -> ExitCode {
         Cli::MakeResponse { name } => make::run(make::Kind::Response, &name),
         Cli::Build => build(),
         Cli::MakeJob { name } => make::run(make::Kind::Job, &name),
+        Cli::MakeCommand { name } => make::run(make::Kind::Command, &name),
         Cli::MakeEvent { name, listener } => make::run(make::Kind::Event { listener }, &name),
-        Cli::Publish { package, list, force } => publish::run(&package, list, force),
+        Cli::Publish { package, driver, list, force } => publish::run(&package, driver.as_deref(), list, force),
         Cli::KeyGenerate => {
             println!("{}", generate_key());
             Ok(())
@@ -159,7 +167,24 @@ fn forward(args: &[String]) -> ExitCode {
 
 const NPM_MISSING: &str = "npm is not installed; install Node.js to build the frontend";
 
+/// Regenerate TypeScript types for page props (`ts-rs`, exported by its
+/// generated tests into `TS_RS_EXPORT_DIR`). Skipped in apps without it.
+fn export_types() -> bool {
+    let configured = fs::read_to_string(".cargo/config.toml").is_ok_and(|c| c.contains("TS_RS_EXPORT_DIR"));
+    if !configured {
+        return true;
+    }
+    let ok = Command::new("cargo").args(["test", "--quiet", "export_bindings"]).status().is_ok_and(|s| s.success());
+    if !ok {
+        eprintln!("art: exporting TypeScript types failed; see the output above");
+    }
+    ok
+}
+
 fn build() -> Result<(), String> {
+    if !export_types() {
+        return Err("TypeScript type export failed".into());
+    }
     if Path::new("package.json").exists() {
         status(Command::new("npm").args(["run", "build"]), NPM_MISSING)?;
     }
@@ -183,21 +208,31 @@ fn dev() -> Result<(), String> {
         None
     };
 
+    export_types();
     loop {
         let mut app = Command::new("cargo").args(["run", "--", "serve"]).spawn().map_err(|e| format!("cargo: {e}"))?;
 
+        let mut changed = vec![];
         loop {
             match rx.recv() {
-                Ok(Ok(ev)) if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)) => break,
+                Ok(Ok(ev)) if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)) => {
+                    changed.extend(ev.paths);
+                    break;
+                }
                 Ok(_) => {}
                 Err(_) => return Err("file watcher stopped".into()),
             }
         }
         // Editors write in bursts; wait for quiet before rebuilding.
-        while rx.recv_timeout(Duration::from_millis(200)).is_ok() {}
+        while let Ok(ev) = rx.recv_timeout(Duration::from_millis(200)) {
+            changed.extend(ev.into_iter().flat_map(|e| e.paths));
+        }
 
         println!("art: change detected, restarting");
         let _ = app.kill();
         let _ = app.wait();
+        if changed.iter().any(|p| p.components().any(|c| c.as_os_str() == "responses")) {
+            export_types();
+        }
     }
 }

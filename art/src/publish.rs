@@ -7,6 +7,9 @@
 //! "stubs/handlers/auth.rs" = "src/handlers/auth.rs"
 //! "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 //!
+//! [package.metadata.art.publish-sqlite]   # `art publish <pkg> --driver sqlite`
+//! "stubs/migrations/sqlite/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
+//!
 //! [package.metadata.art]
 //! notes = "Printed after publishing: the lines to add to routes.rs and main.rs."
 //! ```
@@ -20,7 +23,7 @@ use std::{
 
 use serde_json::Value;
 
-pub fn run(package: &str, list: bool, force: bool) -> Result<(), String> {
+pub fn run(package: &str, driver: Option<&str>, list: bool, force: bool) -> Result<(), String> {
     let out = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
         .output()
@@ -38,7 +41,12 @@ pub fn run(package: &str, list: bool, force: bool) -> Result<(), String> {
         .ok_or_else(|| format!("`{package}` is not a dependency of this app; add it to Cargo.toml first"))?;
     let src_dir = Path::new(pkg["manifest_path"].as_str().unwrap_or_default()).parent().map(Path::to_path_buf).unwrap_or_default();
     let art = &pkg["metadata"]["art"];
-    let table = art["publish"].as_object().ok_or_else(|| format!("`{package}` has nothing to publish"))?;
+    // Driver-specific stubs live under `publish-<driver>`, e.g. `publish-sqlite`.
+    let key = driver.map_or("publish".to_owned(), |d| format!("publish-{d}"));
+    let table = art[&key].as_object().ok_or_else(|| match driver {
+        Some(d) => format!("`{package}` has no stubs for driver `{d}`"),
+        None => format!("`{package}` has nothing to publish"),
+    })?;
 
     let ts = next_version(&timestamp());
     for (from, to) in table {
