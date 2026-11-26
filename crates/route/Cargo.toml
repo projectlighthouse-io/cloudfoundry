@@ -20,6 +20,7 @@ tracing = "0.1"
 
 action = { path = "../action", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
+multer = { version = "3", optional = true }
 hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
 hyper-util = { version = "0.1", features = ["tokio", "server-auto", "http1", "http2"], optional = true }
 tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
@@ -29,6 +30,8 @@ tokio = { version = "1", features = ["net", "rt", "time"], optional = true }
 server = ["dep:hyper", "dep:hyper-util", "dep:tokio"]
 # `route::command::{list, serve}` for the `command` crate. Needs no dependency on it.
 command = ["dep:clap"]
+# `Multipart`: `multipart/form-data` bodies, e.g. file uploads.
+multipart = ["dep:multer"]
 # `route::action(a)` turns an `Action` into a handler.
 action = ["dep:action"]
 

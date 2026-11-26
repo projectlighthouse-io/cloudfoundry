@@ -17,7 +17,7 @@ pub const DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BodyLimit(pub usize);
 
-fn limit_of<B>(req: &Request<B>) -> usize {
+pub(crate) fn limit_of<B>(req: &Request<B>) -> usize {
     req.extensions().get::<BodyLimit>().map_or(DEFAULT_BODY_LIMIT, |l| l.0)
 }
 

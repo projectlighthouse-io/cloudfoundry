@@ -18,6 +18,8 @@ mod url;
 mod action_handler;
 #[cfg(feature = "command")]
 pub mod command;
+#[cfg(feature = "multipart")]
+mod multipart;
 #[cfg(feature = "server")]
 mod server;
 
@@ -26,6 +28,8 @@ pub use action_handler::{ActionHandler, action};
 pub use extract::{BodyLimit, Cx, DEFAULT_BODY_LIMIT, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
 pub use response::{IntoResponse, Redirect};
+#[cfg(feature = "multipart")]
+pub use multipart::{Field, Multipart, MultipartError};
 #[cfg(feature = "server")]
 pub use server::serve;
 pub use url::UrlError;
