@@ -23,7 +23,7 @@ mod server;
 
 #[cfg(feature = "action")]
 pub use action_impl::{ActionHandler, action};
-pub use extract::{BODY_LIMIT, Cx, Form, FromRequest, Json, Path, Query};
+pub use extract::{BODY_LIMIT, Cx, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
 pub use response::{IntoResponse, Redirect};
 #[cfg(feature = "server")]
@@ -214,7 +214,7 @@ impl<S: Send + Sync + 'static> Router<S> {
         <L::Service as Service<Request<Body>>>::Future: Send + 'static,
     {
         self.layers.push(LayerFn {
-            name: type_name::<L>(),
+            name: short_name(type_name::<L>()),
             apply: Arc::new(move |svc| BoxCloneSyncService::new(layer.layer(svc))),
         });
         self
@@ -316,6 +316,12 @@ struct Flat<S> {
     make: MakeService<S>,
 }
 
+/// `session::layer::SessionLayer<session::store::PostgresStore>` -> `SessionLayer`.
+fn short_name(full: &'static str) -> &'static str {
+    let base = full.split('<').next().unwrap_or(full);
+    base.rsplit("::").next().unwrap_or(base)
+}
+
 fn join(prefix: &str, path: &str) -> String {
     let p = format!("{prefix}{path}");
     match p.trim_end_matches('/') {
@@ -340,7 +346,10 @@ where
                     Some(loc) => {
                         res.headers_mut().insert(header::LOCATION, loc);
                     }
-                    None => res = StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                    None => {
+                        tracing::error!("redirect to route `{name}` failed: unknown name or wrong parameters");
+                        res = StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
                 }
             }
             Ok::<_, Infallible>(res)
@@ -367,6 +376,17 @@ struct Inner {
     endpoints: Vec<Vec<(Method, BoxService, usize)>>,
     table: Vec<Arc<RouteInfo>>,
     urls: Arc<Urls>,
+}
+
+/// URL generation for layers, which run outside the handler. In request
+/// extensions for every matched request.
+#[derive(Clone)]
+pub struct UrlFor(Arc<Urls>);
+
+impl UrlFor {
+    pub fn url(&self, name: impl Name, params: &[(&str, &str)]) -> Result<String, UrlError> {
+        self.0.url(name.as_str(), params)
+    }
 }
 
 /// A built, immutable router. Cheap to clone. Lookup takes no lock.
@@ -414,6 +434,7 @@ impl Routes {
 
         req.extensions_mut().insert(params);
         req.extensions_mut().insert(Matched(inner.table[*t].clone()));
+        req.extensions_mut().insert(UrlFor(inner.urls.clone()));
         ResponseFuture(Kind::Service(svc.clone().oneshot(req)))
     }
 }

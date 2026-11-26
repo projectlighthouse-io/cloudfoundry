@@ -1,7 +1,7 @@
 use std::{future::Future, ops::Deref, sync::Arc};
 
 use bytes::Bytes;
-use http::{Request, Response, StatusCode, header};
+use http::{Request, Response, StatusCode, header, request::Parts};
 use http_body_util::BodyExt;
 use percent_encoding::percent_decode_str;
 use serde::de::DeserializeOwned;
@@ -16,6 +16,49 @@ pub const BODY_LIMIT: usize = 2 * 1024 * 1024;
 pub trait FromRequest<S>: Sized + Send {
     fn from_request(req: Request<Body>, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send;
 }
+
+/// An input read from the request head only (no body). Every such input can
+/// sit before the last element of a tuple input: `(Session, Valid<Form<Login>>)`.
+pub trait FromRequestParts<S>: Sized + Send {
+    fn from_request_parts(parts: &mut Parts, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send;
+}
+
+/// `FromRequest` for a `FromRequestParts` type: drop the body, read the head.
+/// Use it to implement both traits for one input.
+pub async fn from_parts<S, T: FromRequestParts<S>>(req: Request<Body>, state: &Arc<S>) -> Result<T, Response<Body>> {
+    let (mut parts, _) = req.into_parts();
+    T::from_request_parts(&mut parts, state).await
+}
+
+macro_rules! via_parts {
+    ($([$($g:tt)*] $ty:ty),* $(,)?) => {$(
+        impl<S: Send + Sync, $($g)*> FromRequest<S> for $ty {
+            fn from_request(req: Request<Body>, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send {
+                from_parts(req, state)
+            }
+        }
+    )*};
+}
+
+via_parts!([] (), [] Cx<S>, [T: DeserializeOwned + Send] Path<T>, [T: DeserializeOwned + Send] Query<T>);
+
+macro_rules! tuple {
+    ($($p:ident),* ; $last:ident) => {
+        #[allow(non_snake_case)]
+        impl<S: Send + Sync, $($p: FromRequestParts<S>,)* $last: FromRequest<S>> FromRequest<S> for ($($p,)* $last,) {
+            async fn from_request(req: Request<Body>, state: &Arc<S>) -> Result<Self, Response<Body>> {
+                let (mut parts, body) = req.into_parts();
+                $(let $p = $p::from_request_parts(&mut parts, state).await?;)*
+                let $last = $last::from_request(Request::from_parts(parts, body), state).await?;
+                Ok(($($p,)* $last,))
+            }
+        }
+    };
+}
+
+tuple!(A; B);
+tuple!(A, B; C);
+tuple!(A, B, C; D);
 
 fn reject(status: StatusCode, msg: impl Into<String>) -> Response<Body> {
     (status, msg.into()).into_response()
@@ -56,8 +99,8 @@ macro_rules! deref {
 
 deref!(Path, Query, Form, Json);
 
-impl<S: Send + Sync> FromRequest<S> for () {
-    async fn from_request(_: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
+impl<S: Send + Sync> FromRequestParts<S> for () {
+    async fn from_request_parts(_: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         Ok(())
     }
 }
@@ -78,8 +121,8 @@ impl<S> Deref for Cx<S> {
     }
 }
 
-impl<S: Send + Sync> FromRequest<S> for Cx<S> {
-    async fn from_request(_: Request<Body>, state: &Arc<S>) -> Result<Self, Response<Body>> {
+impl<S: Send + Sync> FromRequestParts<S> for Cx<S> {
+    async fn from_request_parts(_: &mut Parts, state: &Arc<S>) -> Result<Self, Response<Body>> {
         Ok(Cx(state.clone()))
     }
 }
@@ -99,10 +142,10 @@ impl PathParams {
 #[derive(Debug)]
 pub struct Path<T>(pub T);
 
-impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Path<T> {
-    async fn from_request(req: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
+impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequestParts<S> for Path<T> {
+    async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         let not_found = || StatusCode::NOT_FOUND.into_response();
-        let params = req.extensions().get::<PathParams>().ok_or_else(not_found)?;
+        let params = parts.extensions.get::<PathParams>().ok_or_else(not_found)?;
         // Round-trip through urlencoded: it parses numbers and newtypes from strings.
         let encoded = serde_urlencoded::to_string(&params.0).map_err(|_| not_found())?;
         if let Ok(v) = serde_urlencoded::from_str::<T>(&encoded) {
@@ -118,9 +161,9 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Path<T> {
 #[derive(Debug)]
 pub struct Query<T>(pub T);
 
-impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Query<T> {
-    async fn from_request(req: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
-        serde_urlencoded::from_str(req.uri().query().unwrap_or(""))
+impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequestParts<S> for Query<T> {
+    async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
+        serde_urlencoded::from_str(parts.uri.query().unwrap_or(""))
             .map(Query)
             .map_err(|e| reject(StatusCode::BAD_REQUEST, e.to_string()))
     }
