@@ -175,7 +175,7 @@ impl http_body::Body for SseBody {
 }
 
 #[cfg(feature = "route")]
-mod route_impl {
+mod handler {
     use std::{future::Future, sync::Arc};
 
     use http_body_util::BodyExt;
@@ -210,4 +210,4 @@ mod route_impl {
 }
 
 #[cfg(feature = "route")]
-pub use route_impl::LastEventId;
+pub use handler::LastEventId;

@@ -15,14 +15,14 @@ mod response;
 mod url;
 
 #[cfg(feature = "action")]
-mod action_impl;
+mod action_handler;
 #[cfg(feature = "command")]
 pub mod command;
 #[cfg(feature = "server")]
 mod server;
 
 #[cfg(feature = "action")]
-pub use action_impl::{ActionHandler, action};
+pub use action_handler::{ActionHandler, action};
 pub use extract::{BODY_LIMIT, Cx, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
 pub use response::{IntoResponse, Redirect};

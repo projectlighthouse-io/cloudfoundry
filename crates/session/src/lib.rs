@@ -201,7 +201,7 @@ fn unix_now() -> i64 {
 }
 
 #[cfg(feature = "route")]
-mod route_impl {
+mod extract {
     use std::{future::Future, sync::Arc};
 
     use route::{
