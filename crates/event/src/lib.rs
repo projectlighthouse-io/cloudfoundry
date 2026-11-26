@@ -121,6 +121,25 @@ impl<C: Clone + Send + Sync + 'static> EventsBuilder<C> {
         self.add::<E>(Listener { name: short(type_name::<F>()).to_owned(), kind: Kind::Inline(inline) })
     }
 
+    /// An `Action` as an inline listener: `Input` is built from the event,
+    /// `Output` is a `Result`. The action carries its own dependencies.
+    #[cfg(feature = "action")]
+    pub fn on_action<E, A>(self, action: A) -> Self
+    where
+        E: Clone + Send + Sync + 'static,
+        A: action::Action + Send + Sync + 'static,
+        A::Input: From<E>,
+        A::Output: Outcome,
+    {
+        let action = Arc::new(action);
+        let inline: Inline<C> = Arc::new(move |_, event| {
+            let event = event.downcast_ref::<E>().expect("listeners are keyed by event type").clone();
+            let action = action.clone();
+            Box::pin(async move { action.run(A::Input::from(event)).await.into_result() })
+        });
+        self.add::<E>(Listener { name: short(type_name::<A>()).to_owned(), kind: Kind::Inline(inline) })
+    }
+
     fn add<E: 'static>(mut self, l: Listener<C>) -> Self {
         let entry = self.listeners.entry(TypeId::of::<E>()).or_insert_with(|| (short(type_name::<E>()), vec![]));
         entry.1.push(l);
@@ -139,6 +158,19 @@ impl<C: Clone + Send + Sync + 'static> EventsBuilder<C> {
             #[cfg(feature = "queue")]
             push: self.push,
         }
+    }
+}
+
+/// An action output a listener can report: `Result<T, E>` with `E` an error.
+#[cfg(feature = "action")]
+pub trait Outcome {
+    fn into_result(self) -> Result<(), Error>;
+}
+
+#[cfg(feature = "action")]
+impl<T, E: Into<Error>> Outcome for Result<T, E> {
+    fn into_result(self) -> Result<(), Error> {
+        self.map(drop).map_err(Into::into)
     }
 }
 
