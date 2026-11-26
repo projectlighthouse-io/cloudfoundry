@@ -23,7 +23,7 @@ mod server;
 
 #[cfg(feature = "action")]
 pub use action_handler::{ActionHandler, action};
-pub use extract::{BODY_LIMIT, Cx, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
+pub use extract::{BodyLimit, Cx, DEFAULT_BODY_LIMIT, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
 pub use response::{IntoResponse, Redirect};
 #[cfg(feature = "server")]
@@ -135,12 +135,20 @@ pub struct Route<S> {
     method: Method,
     path: String,
     name: Option<&'static str>,
+    body_limit: Option<usize>,
     make: MakeService<S>,
 }
 
 impl<S> Route<S> {
     pub fn name(&mut self, name: impl Name) -> &mut Self {
         self.name = Some(name.as_str());
+        self
+    }
+
+    /// Largest request body this route's inputs read, in bytes. Overrides
+    /// the router's and group's limit.
+    pub fn body_limit(&mut self, bytes: usize) -> &mut Self {
+        self.body_limit = Some(bytes);
         self
     }
 }
@@ -153,11 +161,12 @@ pub struct Router<S> {
     routes: Vec<Route<S>>,
     groups: Vec<Router<S>>,
     fallback: Option<BoxService>,
+    body_limit: Option<usize>,
 }
 
 impl<S> Default for Router<S> {
     fn default() -> Self {
-        Self { prefix: String::new(), name_prefix: String::new(), layers: vec![], routes: vec![], groups: vec![], fallback: None }
+        Self { prefix: String::new(), name_prefix: String::new(), layers: vec![], routes: vec![], groups: vec![], fallback: None, body_limit: None }
     }
 }
 
@@ -172,7 +181,7 @@ impl<S: Send + Sync + 'static> Router<S> {
         M: 'static,
     {
         let make: MakeService<S> = Arc::new(move |state, urls| handler_service(handler.clone(), state, urls));
-        self.routes.push(Route { method, path: path.to_owned(), name: None, make });
+        self.routes.push(Route { method, path: path.to_owned(), name: None, body_limit: None, make });
         self.routes.last_mut().unwrap()
     }
 
@@ -198,6 +207,13 @@ impl<S: Send + Sync + 'static> Router<S> {
         let mut group = Router { prefix: prefix.to_owned(), ..Router::default() };
         f(&mut group);
         self.groups.push(group);
+        self
+    }
+
+    /// Largest request body the inputs of this router's (or group's) routes
+    /// read, in bytes. Nested groups inherit it. Default `DEFAULT_BODY_LIMIT` (2 MiB).
+    pub fn body_limit(&mut self, bytes: usize) -> &mut Self {
+        self.body_limit = Some(bytes);
         self
     }
 
@@ -239,7 +255,7 @@ impl<S: Send + Sync + 'static> Router<S> {
     /// method and path pairs, and conflicting paths.
     pub fn build(&self, state: S) -> Result<Routes, BuildError> {
         let mut flat = vec![];
-        self.flatten("", "", &[], &mut flat);
+        self.flatten("", "", &[], DEFAULT_BODY_LIMIT, &mut flat);
 
         let mut names = HashMap::new();
         for f in &flat {
@@ -289,6 +305,7 @@ impl<S: Send + Sync + 'static> Router<S> {
                 path: f.path,
                 name: f.name,
                 layers: f.layers.iter().map(|l| l.name).collect(),
+                body_limit: f.body_limit,
             }));
         }
 
@@ -304,7 +321,8 @@ impl<S: Send + Sync + 'static> Router<S> {
         }
     }
 
-    fn flatten(&self, prefix: &str, name_prefix: &str, layers: &[LayerFn], out: &mut Vec<Flat<S>>) {
+    fn flatten(&self, prefix: &str, name_prefix: &str, layers: &[LayerFn], body_limit: usize, out: &mut Vec<Flat<S>>) {
+        let body_limit = self.body_limit.unwrap_or(body_limit);
         // A trailing slash on a group prefix (`/` or `/api/`) must not double up.
         let prefix = format!("{prefix}{}", self.prefix.trim_end_matches('/'));
         let name_prefix = format!("{name_prefix}{}", self.name_prefix);
@@ -315,11 +333,12 @@ impl<S: Send + Sync + 'static> Router<S> {
                 path: join(&prefix, &r.path),
                 name: r.name.map(|n| format!("{name_prefix}{n}")),
                 layers: layers.clone(),
+                body_limit: r.body_limit.unwrap_or(body_limit),
                 make: r.make.clone(),
             });
         }
         for g in &self.groups {
-            g.flatten(&prefix, &name_prefix, &layers, out);
+            g.flatten(&prefix, &name_prefix, &layers, body_limit, out);
         }
     }
 }
@@ -329,6 +348,7 @@ struct Flat<S> {
     path: String,
     name: Option<String>,
     layers: Vec<LayerFn>,
+    body_limit: usize,
     make: MakeService<S>,
 }
 
@@ -380,6 +400,8 @@ pub struct RouteInfo {
     pub path: String,
     pub name: Option<String>,
     pub layers: Vec<&'static str>,
+    /// Largest body this route's inputs read, in bytes.
+    pub body_limit: usize,
 }
 
 /// The matched route. In request extensions, for layers such as CSRF that
@@ -453,6 +475,7 @@ impl Routes {
         };
 
         req.extensions_mut().insert(params);
+        req.extensions_mut().insert(BodyLimit(inner.table[*t].body_limit));
         req.extensions_mut().insert(Matched(inner.table[*t].clone()));
         req.extensions_mut().insert(UrlFor(inner.urls.clone()));
         ResponseFuture(Kind::Service(svc.clone().oneshot(req)))

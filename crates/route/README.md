@@ -27,6 +27,10 @@ Handlers are free async functions with one input (`FromRequest`, or a tuple of u
 four) and one output (`IntoResponse`). Groups share a path prefix, a name prefix and
 tower layers, composed once at build time. See `examples/hello.rs`.
 
+Body inputs (`Form`, `Json`, `Bytes`) read at most 2 MiB (`DEFAULT_BODY_LIMIT`);
+over it is a 413. Raise it per router or group with `r.body_limit(n)`, or per route
+with `r.post("/upload", h).body_limit(n)`.
+
 ## Features
 
 | Feature | Adds |

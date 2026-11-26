@@ -165,3 +165,27 @@ async fn group_prefix_with_trailing_slash() {
     assert_eq!(routes.url("api", &[]).unwrap(), "/api");
     assert_eq!(call(&routes, Method::GET, "/go", empty()).await.2, "go");
 }
+
+#[tokio::test]
+async fn body_limits_default_group_and_route() {
+    async fn echo(b: bytes::Bytes) -> String {
+        b.len().to_string()
+    }
+    let mut r = Router::<()>::new();
+    r.post("/default", echo);
+    r.group("/uploads", |r| {
+        r.body_limit(10);
+        r.post("/small", echo);
+        r.post("/big", echo).body_limit(100);
+    });
+    let routes = r.build(()).unwrap();
+    let post = |uri: &'static str, n: usize| call(&routes, Method::POST, uri, body(vec![b'x'; n]));
+
+    assert_eq!(post("/default", 1024).await.2, "1024");
+    assert_eq!(post("/uploads/small", 10).await.2, "10");
+    assert_eq!(post("/uploads/small", 11).await.0, StatusCode::PAYLOAD_TOO_LARGE, "group limit");
+    assert_eq!(post("/uploads/big", 100).await.2, "100", "route overrides group");
+    assert_eq!(post("/uploads/big", 101).await.0, StatusCode::PAYLOAD_TOO_LARGE);
+    let info = routes.table().find(|i| i.path == "/default").unwrap();
+    assert_eq!(info.body_limit, route::DEFAULT_BODY_LIMIT);
+}

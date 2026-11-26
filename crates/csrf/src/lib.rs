@@ -141,7 +141,7 @@ where
                 // A plain HTML form: the token is the `_token` field. Read the body,
                 // check it, and hand the same bytes on.
                 let (parts, body) = req.into_parts();
-                let Some(bytes) = read_limited(body).await else { return expired() };
+                let Some(bytes) = read_limited(body, form_limit(&parts.extensions)).await else { return expired() };
                 let field = form_field(&bytes, "_token");
                 if !field.is_some_and(|f| ct_eq(&f, &token)) {
                     return expired();
@@ -196,15 +196,25 @@ impl FormBody for route::Body {
     }
 }
 
-/// Largest form body read for `_token`. Larger forms must send the header.
+/// Largest form body read for `_token` without `route`'s per-route limit.
 const FORM_LIMIT: usize = 2 * 1024 * 1024;
 
-async fn read_limited<B: FormBody>(mut body: B) -> Option<Bytes> {
+#[cfg(feature = "route")]
+fn form_limit(ext: &http::Extensions) -> usize {
+    ext.get::<route::BodyLimit>().map_or(FORM_LIMIT, |l| l.0)
+}
+
+#[cfg(not(feature = "route"))]
+fn form_limit(_: &http::Extensions) -> usize {
+    FORM_LIMIT
+}
+
+async fn read_limited<B: FormBody>(mut body: B, limit: usize) -> Option<Bytes> {
     use http_body_util::BodyExt;
     let mut buf = Vec::new();
     while let Some(frame) = body.frame().await {
         if let Ok(data) = frame.ok()?.into_data() {
-            if buf.len() + data.len() > FORM_LIMIT {
+            if buf.len() + data.len() > limit {
                 return None;
             }
             buf.extend_from_slice(&data);

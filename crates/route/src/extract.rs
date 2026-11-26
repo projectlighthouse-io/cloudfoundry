@@ -8,9 +8,18 @@ use serde::de::DeserializeOwned;
 
 use crate::{Body, IntoResponse};
 
-/// Largest body `Form`, `Json`, `Bytes` and `Request<Bytes>` will read.
-/// ponytail: fixed; make it per-route when an upload route needs more.
-pub const BODY_LIMIT: usize = 2 * 1024 * 1024;
+/// Largest body `Form`, `Json`, `Bytes` and `Request<Bytes>` read when no
+/// limit is set with `Router::body_limit` or `Route::body_limit`.
+pub const DEFAULT_BODY_LIMIT: usize = 2 * 1024 * 1024;
+
+/// The body limit for the matched route, in request extensions. Set by the
+/// router; layers that read bodies (CSRF's `_token`) honour it too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BodyLimit(pub usize);
+
+fn limit_of<B>(req: &Request<B>) -> usize {
+    req.extensions().get::<BodyLimit>().map_or(DEFAULT_BODY_LIMIT, |l| l.0)
+}
 
 /// A handler input, parsed from the request. A failure is the response.
 pub trait FromRequest<S>: Sized + Send {
@@ -64,12 +73,12 @@ fn reject(status: StatusCode, msg: impl Into<String>) -> Response<Body> {
     (status, msg.into()).into_response()
 }
 
-async fn collect(mut body: Body) -> Result<Bytes, Response<Body>> {
+async fn collect(mut body: Body, limit: usize) -> Result<Bytes, Response<Body>> {
     let mut buf = Vec::new();
     while let Some(frame) = body.frame().await {
         let frame = frame.map_err(|_| reject(StatusCode::BAD_REQUEST, "failed to read body"))?;
         if let Ok(data) = frame.into_data() {
-            if buf.len() + data.len() > BODY_LIMIT {
+            if buf.len() + data.len() > limit {
                 return Err(reject(StatusCode::PAYLOAD_TOO_LARGE, "payload too large"));
             }
             buf.extend_from_slice(&data);
@@ -178,7 +187,8 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Form<T> {
         if !content_type_is(&req, "application/x-www-form-urlencoded") {
             return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
         }
-        let bytes = collect(req.into_body()).await?;
+        let limit = limit_of(&req);
+        let bytes = collect(req.into_body(), limit).await?;
         serde_urlencoded::from_bytes(&bytes)
             .map(Form)
             .map_err(|e| reject(StatusCode::BAD_REQUEST, e.to_string()))
@@ -194,7 +204,8 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Json<T> {
         if !content_type_is(&req, "application/json") {
             return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
         }
-        let bytes = collect(req.into_body()).await?;
+        let limit = limit_of(&req);
+        let bytes = collect(req.into_body(), limit).await?;
         serde_json::from_slice(&bytes)
             .map(Json)
             .map_err(|e| reject(StatusCode::BAD_REQUEST, e.to_string()))
@@ -203,16 +214,18 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequest<S> for Json<T> {
 
 impl<S: Send + Sync> FromRequest<S> for Bytes {
     async fn from_request(req: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
-        collect(req.into_body()).await
+        let limit = limit_of(&req);
+        collect(req.into_body(), limit).await
     }
 }
 
-/// Headers plus the raw body, read up to `BODY_LIMIT`. For signed payloads
+/// Headers plus the raw body, read up to the route's body limit. For signed payloads
 /// such as webhooks, where the exact bytes matter.
 impl<S: Send + Sync> FromRequest<S> for Request<Bytes> {
     async fn from_request(req: Request<Body>, _: &Arc<S>) -> Result<Self, Response<Body>> {
+        let limit = limit_of(&req);
         let (parts, body) = req.into_parts();
-        Ok(Request::from_parts(parts, collect(body).await?))
+        Ok(Request::from_parts(parts, collect(body, limit).await?))
     }
 }
 
