@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "action"
+version = "0.1.0"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -195,6 +199,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 name = "command"
 version = "0.1.0"
 dependencies = [
+ "action",
  "clap",
 ]
 
@@ -1169,6 +1174,7 @@ dependencies = [
 name = "route"
 version = "0.1.0"
 dependencies = [
+ "action",
  "bytes",
  "clap",
  "http",
@@ -1828,6 +1834,17 @@ name = "utf_types"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
+
+[[package]]
+name = "validate"
+version = "0.1.0"
+dependencies = [
+ "http-body-util",
+ "route",
+ "serde",
+ "serde_json",
+ "tokio",
+]
 
 [[package]]
 name = "vcpkg"
