@@ -25,7 +25,11 @@ pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>))
     };
     password::verify(&input.password, &user.password_hash).map_err(|_| failed())?;
 
-    auth.login(&user);
+    if input.remember {
+        auth.login_remember(&user);
+    } else {
+        auth.login(&user);
+    }
     Ok(Redirect::to_route("home"))
 }
 

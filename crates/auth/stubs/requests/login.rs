@@ -7,6 +7,8 @@ use validate::{Errors, Validate, email, required};
 pub struct Login {
     pub email: String,
     pub password: String,
+    #[serde(default)]
+    pub remember: bool,
 }
 
 impl Validate for Login {

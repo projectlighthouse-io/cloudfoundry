@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useForm } from '@inertiajs/vue3'
 
-const form = useForm({ email: '', password: '' })
+const form = useForm({ email: '', password: '', remember: false })
 </script>
 
 <template>
@@ -19,6 +19,11 @@ const form = useForm({ email: '', password: '' })
         <input v-model="form.password" type="password" autocomplete="current-password" required />
       </label>
       <p v-if="form.errors.password">{{ form.errors.password }}</p>
+
+      <label>
+        <input v-model="form.remember" type="checkbox" />
+        Remember me
+      </label>
 
       <button type="submit" :disabled="form.processing">Log in</button>
     </form>

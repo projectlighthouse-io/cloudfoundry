@@ -6,8 +6,11 @@ rust-version = "1.85"
 description = "Know who the current user is, and guard routes"
 
 [dependencies]
+base64 = "0.22"
+getrandom = "0.3"
 route = { path = "../route" }
 serde = "1"
+securecookie = { path = "../securecookie" }
 serde_json = "1"
 session = { path = "../session", features = ["route"] }
 tokio = { version = "1", features = ["sync"] }
@@ -27,12 +30,29 @@ tokio = { version = "1", features = ["macros", "rt"] }
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
+[package.metadata.art.publish-sqlite]
+"stubs/sqlite/users.rs" = "src/users.rs"
+"stubs/handlers/login.rs" = "src/handlers/login.rs"
+"stubs/requests/login.rs" = "src/requests/login.rs"
+"stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+"stubs/sqlite/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
+"stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/mysql/users.rs" = "src/users.rs"
+"stubs/handlers/login.rs" = "src/handlers/login.rs"
+"stubs/requests/login.rs" = "src/requests/login.rs"
+"stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+"stubs/mysql/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
+"stubs/mysql/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
+
 [package.metadata.art]
 notes = """
 Add the dependency `password = { <same source as auth> }`, then:
 
   src/main.rs           mod users;
                         .layer(auth::layer(users::Users { db: app.db.clone() }))   // after the session and csrf layers
+                        // "remember me": .layer(auth::layer(users).remember(Codec::new(Keys::parse(&key)?)))
   src/handlers/mod.rs   pub mod login;
   src/requests/mod.rs   pub mod login;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");

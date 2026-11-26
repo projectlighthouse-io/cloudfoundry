@@ -6,6 +6,8 @@
 //! - [`Authed<U>`]: handler input that exists only for a logged-in user.
 //! - [`Auth<U>`]: optional user, plus `login` and `logout`.
 //! - [`require`] / [`guest`]: layers for routes whose handlers take neither.
+//! - [`Remember`] + `.remember(codec)`: "remember me" cookies.
+//! - [`Tokens`] + `.tokens()`: `Authorization: Bearer` for APIs.
 //!
 //! Only the user id is stored in the session. The user is loaded at most once
 //! per request, and only if something asks.
@@ -14,13 +16,17 @@ use std::{
     future::Future,
     ops::Deref,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
+    time::Duration,
 };
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use securecookie::Codec;
 
 use route::{
     Body, FromRequest, FromRequestParts, IntoResponse, Redirect, UrlFor,
-    http::{Extensions, HeaderMap, Request, Response, StatusCode, header, request::Parts},
+    http::{Extensions, HeaderMap, HeaderValue, Request, Response, StatusCode, header, request::Parts},
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -65,50 +71,209 @@ impl<P: Provider> Erased<P::User> for P {
     }
 }
 
+/// Providers that keep a remember token per user, for "remember me".
+pub trait Remember: Provider {
+    /// The token stored for `user`, if any.
+    fn remember_token(&self, user: &Self::User) -> Option<String>;
+    /// Store a new token for the user with `id`, or clear it with `None`.
+    fn set_remember_token(&self, id: Self::Id, token: Option<String>) -> impl Future<Output = Result<(), Error>> + Send;
+}
+
+/// Providers that can find a user by API token, for `Authorization: Bearer`.
+pub trait Tokens: Provider {
+    fn by_token(&self, token: &str) -> impl Future<Output = Result<Option<Self::User>, Error>> + Send;
+}
+
+trait ErasedRemember<U>: Send + Sync {
+    fn token_of(&self, user: &U) -> Option<String>;
+    fn set(&self, id: Value, token: Option<String>) -> BoxFuture<'_, Result<(), Error>>;
+}
+
+impl<P: Remember> ErasedRemember<P::User> for P {
+    fn token_of(&self, user: &P::User) -> Option<String> {
+        self.remember_token(user)
+    }
+
+    fn set(&self, id: Value, token: Option<String>) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(async move { self.set_remember_token(serde_json::from_value(id)?, token).await })
+    }
+}
+
+trait ErasedTokens<U>: Send + Sync {
+    fn by_token<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<Option<U>, Error>>;
+}
+
+impl<P: Tokens> ErasedTokens<P::User> for P {
+    fn by_token<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<Option<P::User>, Error>> {
+        Box::pin(Tokens::by_token(self, token))
+    }
+}
+
+/// Browsers cap cookie lifetimes at 400 days.
+const REMEMBER_FOR: Duration = Duration::from_secs(400 * 86400);
+
+struct RememberCfg<U> {
+    store: Arc<dyn ErasedRemember<U>>,
+    codec: Arc<Codec>,
+    cookie: String,
+}
+
+/// Cookie work the layer does after the handler.
+#[derive(Default)]
+enum Pending {
+    #[default]
+    None,
+    Remember { id: Value, token: String },
+    Forget { id: Option<Value> },
+}
+
 /// Per-request auth context, in request extensions.
 struct AuthCx<U> {
     provider: Arc<dyn Erased<U>>,
-    user: Arc<OnceCell<Option<U>>>,
+    remember: Option<Arc<RememberCfg<U>>>,
+    tokens: Option<Arc<dyn ErasedTokens<U>>>,
     cfg: Arc<Config>,
+    user: Arc<OnceCell<Option<U>>>,
+    bearer: Option<Arc<str>>,
+    recaller: Option<Arc<str>>,
+    pending: Arc<Mutex<Pending>>,
 }
 
 impl<U> Clone for AuthCx<U> {
     fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), user: self.user.clone(), cfg: self.cfg.clone() }
+        Self {
+            provider: self.provider.clone(),
+            remember: self.remember.clone(),
+            tokens: self.tokens.clone(),
+            cfg: self.cfg.clone(),
+            user: self.user.clone(),
+            bearer: self.bearer.clone(),
+            recaller: self.recaller.clone(),
+            pending: self.pending.clone(),
+        }
     }
 }
 
 struct Config {
     login_route: &'static str,
+    secure: bool,
 }
 
 impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
-    async fn user(&self, session: &Session) -> Result<Option<U>, Error> {
+    /// Bearer token first (APIs), then the session, then the remember cookie.
+    async fn user(&self, session: Option<&Session>) -> Result<Option<U>, Error> {
         self.user
             .get_or_try_init(|| async {
+                if let (Some(tokens), Some(bearer)) = (&self.tokens, &self.bearer) {
+                    return tokens.by_token(bearer).await;
+                }
+                let Some(session) = session else { return Ok(None) };
                 match session.get::<Value>(SESSION_KEY)? {
                     Some(id) => self.provider.find(id).await,
-                    None => Ok(None),
+                    None => self.recall(session).await,
                 }
             })
             .await
             .cloned()
     }
+
+    /// Log in from a valid remember cookie whose token still matches the stored one.
+    async fn recall(&self, session: &Session) -> Result<Option<U>, Error> {
+        let (Some(r), Some(cookie)) = (&self.remember, &self.recaller) else { return Ok(None) };
+        let mut found = None;
+        if let Ok((id, token)) = r.codec.verify::<(Value, String)>(&r.cookie, cookie, REMEMBER_FOR) {
+            if let Some(user) = self.provider.find(id.clone()).await? {
+                if r.store.token_of(&user).is_some_and(|t| ct_eq(&t, &token)) {
+                    found = Some((id, user));
+                }
+            }
+        }
+        match found {
+            Some((id, user)) => {
+                session.regenerate();
+                session.insert(SESSION_KEY, &id)?;
+                Ok(Some(user))
+            }
+            None => {
+                // Stale or forged: drop the cookie.
+                *self.pending.lock().unwrap() = Pending::Forget { id: None };
+                Ok(None)
+            }
+        }
+    }
+
+    async fn finish<B>(&self, res: &mut Response<B>) {
+        let Some(r) = &self.remember else { return };
+        let pending = std::mem::take(&mut *self.pending.lock().unwrap());
+        match pending {
+            Pending::None => {}
+            Pending::Remember { id, token } => {
+                if let Err(e) = r.store.set(id.clone(), Some(token.clone())).await {
+                    return tracing::error!("storing the remember token failed: {e}");
+                }
+                match r.codec.sign(&r.cookie, &(id, token)) {
+                    Ok(v) => set_cookie(res, &r.cookie, &v, REMEMBER_FOR.as_secs(), self.cfg.secure),
+                    Err(e) => tracing::error!("signing the remember cookie failed: {e}"),
+                }
+            }
+            Pending::Forget { id } => {
+                if let Some(id) = id {
+                    if let Err(e) = r.store.set(id, None).await {
+                        tracing::error!("clearing the remember token failed: {e}");
+                    }
+                }
+                set_cookie(res, &r.cookie, "", 0, self.cfg.secure);
+            }
+        }
+    }
 }
 
-fn context<U: Send + Sync + 'static>(ext: &Extensions) -> Result<(AuthCx<U>, Session), Response<Body>> {
-    match (ext.get::<AuthCx<U>>(), ext.get::<Session>()) {
-        (Some(cx), Some(s)) => Ok((cx.clone(), s.clone())),
-        _ => {
-            tracing::error!("no auth context; add `session::layer` and then `auth::layer` to the router");
+fn set_cookie<B>(res: &mut Response<B>, name: &str, value: &str, max_age: u64, secure: bool) {
+    let secure = if secure { "; Secure" } else { "" };
+    let c = format!("{name}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}");
+    if let Ok(v) = HeaderValue::try_from(c) {
+        res.headers_mut().append(header::SET_COOKIE, v);
+    }
+}
+
+fn cookie<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v)
+}
+
+fn bearer(headers: &HeaderMap) -> Option<&str> {
+    headers.get(header::AUTHORIZATION)?.to_str().ok()?.strip_prefix("Bearer ").map(str::trim)
+}
+
+fn ct_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+fn random_token() -> String {
+    let mut b = [0u8; 32];
+    getrandom::fill(&mut b).expect("OS random source");
+    URL_SAFE_NO_PAD.encode(b)
+}
+
+fn context<U: Send + Sync + 'static>(ext: &Extensions) -> Result<(AuthCx<U>, Option<Session>), Response<Body>> {
+    match ext.get::<AuthCx<U>>() {
+        Some(cx) => Ok((cx.clone(), ext.get::<Session>().cloned())),
+        None => {
+            tracing::error!("no auth context; add `auth::layer` (after `session::layer`) to the router");
             Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
         }
     }
 }
 
-async fn current<U: Clone + Send + Sync + 'static>(ext: &Extensions) -> Result<(Option<U>, AuthCx<U>, Session), Response<Body>> {
+async fn current<U: Clone + Send + Sync + 'static>(ext: &Extensions) -> Result<(Option<U>, AuthCx<U>, Option<Session>), Response<Body>> {
     let (cx, session) = context::<U>(ext)?;
-    match cx.user(&session).await {
+    match cx.user(session.as_ref()).await {
         Ok(user) => Ok((user, cx, session)),
         Err(e) => {
             tracing::error!("loading the current user failed: {e}");
@@ -135,67 +300,113 @@ fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &'static str) -
 
 /// Make `Auth<U>`, `Authed<U>`, `require` and `guest` work. Add after the
 /// session layer.
-pub fn layer<P: Provider>(provider: P) -> AuthLayer<P::User> {
-    AuthLayer { provider: Arc::new(provider), cfg: Arc::new(Config { login_route: "login" }) }
+pub fn layer<P: Provider>(provider: P) -> AuthLayer<P> {
+    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, cfg: Arc::new(Config { login_route: "login", secure: true }) }
 }
 
-pub struct AuthLayer<U> {
-    provider: Arc<dyn Erased<U>>,
+pub struct AuthLayer<P: Provider> {
+    provider: Arc<P>,
+    remember: Option<Arc<RememberCfg<P::User>>>,
+    tokens: Option<Arc<dyn ErasedTokens<P::User>>>,
     cfg: Arc<Config>,
 }
 
-impl<U> AuthLayer<U> {
+impl<P: Provider> AuthLayer<P> {
     /// Route name anonymous page visits are sent to. Default `login`.
     pub fn login_route(self, name: &'static str) -> Self {
-        Self { cfg: Arc::new(Config { login_route: name }), ..self }
+        Self { cfg: Arc::new(Config { login_route: name, secure: self.cfg.secure }), ..self }
+    }
+
+    /// `Secure` on the remember cookie. Default `true` (browsers accept it on localhost).
+    pub fn secure(self, secure: bool) -> Self {
+        Self { cfg: Arc::new(Config { login_route: self.cfg.login_route, secure }), ..self }
     }
 }
 
-impl<U> Clone for AuthLayer<U> {
+impl<P: Remember> AuthLayer<P> {
+    /// Enable "remember me": `Auth::login_remember` sets a signed, 400-day
+    /// cookie that logs the user back in after the session ends. Logout
+    /// clears the stored token, so old cookies stop working.
+    pub fn remember(mut self, codec: Codec) -> Self {
+        let store: Arc<dyn ErasedRemember<P::User>> = self.provider.clone();
+        self.remember = Some(Arc::new(RememberCfg { store, codec: Arc::new(codec), cookie: "remember".into() }));
+        self
+    }
+}
+
+impl<P: Tokens> AuthLayer<P> {
+    /// Accept `Authorization: Bearer <token>`. A bearer request is
+    /// authenticated by the token alone; the session is not consulted. Exempt
+    /// such API routes from CSRF, which guards cookie-based requests.
+    pub fn tokens(mut self) -> Self {
+        let tokens: Arc<dyn ErasedTokens<P::User>> = self.provider.clone();
+        self.tokens = Some(tokens);
+        self
+    }
+}
+
+impl<P: Provider> Clone for AuthLayer<P> {
     fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), cfg: self.cfg.clone() }
+        Self { provider: self.provider.clone(), remember: self.remember.clone(), tokens: self.tokens.clone(), cfg: self.cfg.clone() }
     }
 }
 
-impl<S, U> Layer<S> for AuthLayer<U> {
-    type Service = AuthService<S, U>;
+impl<S, P: Provider> Layer<S> for AuthLayer<P> {
+    type Service = AuthService<S, P>;
 
     fn layer(&self, inner: S) -> Self::Service {
         AuthService { inner, layer: self.clone() }
     }
 }
 
-pub struct AuthService<S, U> {
+pub struct AuthService<S, P: Provider> {
     inner: S,
-    layer: AuthLayer<U>,
+    layer: AuthLayer<P>,
 }
 
-impl<S: Clone, U> Clone for AuthService<S, U> {
+impl<S: Clone, P: Provider> Clone for AuthService<S, P> {
     fn clone(&self) -> Self {
         Self { inner: self.inner.clone(), layer: self.layer.clone() }
     }
 }
 
-impl<S, U, B> Service<Request<B>> for AuthService<S, U>
+impl<S, P, ReqB, ResB> Service<Request<ReqB>> for AuthService<S, P>
 where
-    S: Service<Request<B>>,
-    U: Send + Sync + 'static,
+    S: Service<Request<ReqB>, Response = Response<ResB>> + Clone + Send + 'static,
+    S::Future: Send,
+    P: Provider,
+    ReqB: Send + 'static,
+    ResB: Send + 'static,
 {
-    type Response = S::Response;
+    type Response = Response<ResB>;
     type Error = S::Error;
-    type Future = S::Future;
+    type Future = BoxFuture<'static, Result<Response<ResB>, S::Error>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
         self.inner.poll_ready(cx)
     }
 
-    fn call(&mut self, mut req: Request<B>) -> S::Future {
-        req.extensions_mut().insert(AuthCx::<U> {
-            provider: self.layer.provider.clone(),
+    fn call(&mut self, mut req: Request<ReqB>) -> Self::Future {
+        let clone = self.inner.clone();
+        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let l = &self.layer;
+        let provider: Arc<dyn Erased<P::User>> = l.provider.clone();
+        let cx = AuthCx::<P::User> {
+            provider,
+            remember: l.remember.clone(),
+            tokens: l.tokens.clone(),
+            cfg: l.cfg.clone(),
             user: Arc::new(OnceCell::new()),
-            cfg: self.layer.cfg.clone(),
-        });
-        self.inner.call(req)
+            bearer: l.tokens.as_ref().and_then(|_| bearer(req.headers())).map(Into::into),
+            recaller: l.remember.as_ref().and_then(|r| cookie(req.headers(), &r.cookie)).map(Into::into),
+            pending: Arc::default(),
+        };
+        req.extensions_mut().insert(cx.clone());
+        Box::pin(async move {
+            let mut res = inner.call(req).await?;
+            cx.finish(&mut res).await;
+            Ok(res)
+        })
     }
 }
 
@@ -227,7 +438,7 @@ impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for Authed
     }
 }
 
-/// The user if there is one, plus login and logout.
+/// The user if there is one, plus login and logout. Needs the session layer.
 pub struct Auth<U> {
     user: Option<U>,
     cx: AuthCx<U>,
@@ -245,15 +456,33 @@ impl<U> Auth<U> {
         self.session.insert(SESSION_KEY, &self.cx.provider.id(user)).expect("JSON value serializes");
     }
 
-    /// Log out. Invalidates the whole session.
+    /// `login`, plus a remember cookie (needs `.remember(codec)` on the layer).
+    pub fn login_remember(&self, user: &U) {
+        self.login(user);
+        if self.cx.remember.is_none() {
+            return tracing::warn!("login_remember without `.remember(codec)` on the auth layer; no cookie set");
+        }
+        *self.cx.pending.lock().unwrap() = Pending::Remember { id: self.cx.provider.id(user), token: random_token() };
+    }
+
+    /// Log out. Invalidates the whole session and, with remember enabled,
+    /// clears the stored token and the cookie.
     pub fn logout(&self) {
         self.session.invalidate();
+        if self.cx.remember.is_some() {
+            let id = self.user.as_ref().map(|u| self.cx.provider.id(u));
+            *self.cx.pending.lock().unwrap() = Pending::Forget { id };
+        }
     }
 }
 
 impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for Auth<U> {
     async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         let (user, cx, session) = current::<U>(&parts.extensions).await?;
+        let Some(session) = session else {
+            tracing::error!("`Auth` needs a session; add `session::layer` before `auth::layer`");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        };
         Ok(Auth { user, cx, session })
     }
 }
