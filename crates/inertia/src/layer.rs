@@ -21,6 +21,8 @@ type Share = Arc<dyn Fn(&Extensions) -> Result<Vec<u8>, serde_json::Error> + Sen
 
 #[derive(Clone)]
 struct Config {
+    #[cfg(feature = "ssr")]
+    ssr: Option<Arc<crate::ssr::Ssr>>,
     pages: Option<Arc<str>>,
     root: Arc<str>,
     version: Arc<str>,
@@ -37,7 +39,11 @@ pub struct InertiaLayer {
 
 pub fn layer() -> InertiaLayer {
     InertiaLayer {
-        cfg: Config { pages: None, root: DEFAULT_ROOT.into(), version: "".into(), head: None, share: None },
+        cfg: Config {
+            #[cfg(feature = "ssr")]
+            ssr: None,
+            pages: None,
+            root: DEFAULT_ROOT.into(), version: "".into(), head: None, share: None },
     }
 }
 
@@ -63,6 +69,26 @@ impl InertiaLayer {
     /// page. Release builds skip the check.
     pub fn pages_dir(mut self, dir: &str) -> Self {
         self.cfg.pages = Some(dir.trim_end_matches('/').into());
+        self
+    }
+
+    /// Render first visits on the Inertia SSR server at `url`
+    /// (`http://127.0.0.1:13714`). Falls back to client rendering if it is
+    /// down, slow or failing.
+    #[cfg(feature = "ssr")]
+    pub fn ssr(mut self, url: &str) -> Self {
+        self.cfg.ssr = Some(Arc::new(crate::ssr::Ssr::new(url)));
+        self
+    }
+
+    /// Give up on SSR after this long (default 2s) and render on the client.
+    #[cfg(feature = "ssr")]
+    pub fn ssr_timeout(mut self, timeout: std::time::Duration) -> Self {
+        if let Some(s) = self.cfg.ssr.take() {
+            let mut s = Arc::try_unwrap(s).unwrap_or_else(|_| panic!("set ssr_timeout before cloning the layer"));
+            s.timeout = timeout;
+            self.cfg.ssr = Some(Arc::new(s));
+        }
         self
     }
 
@@ -184,6 +210,12 @@ where
                 body(page)
             } else {
                 parts.headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("text/html; charset=utf-8"));
+                #[cfg(feature = "ssr")]
+                if let Some(ssr) = &cfg.ssr {
+                    if let Some((head, app)) = ssr.render(&page).await {
+                        return Ok(vary(Response::from_parts(parts, body(shell(&cfg, &head, &app)))));
+                    }
+                }
                 body(html(&cfg, &page))
             };
             Ok(vary(Response::from_parts(parts, body)))
@@ -337,8 +369,13 @@ fn html(cfg: &Config, page: &[u8]) -> String {
     // browsers do not decode them inside <script>.
     let json = String::from_utf8_lossy(page).replace('<', "\\u003c");
     let app = format!(r#"<script data-page="app" type="application/json">{json}</script><div id="app"></div>"#);
-    let head = cfg.head.as_ref().map(|f| f()).unwrap_or_default();
-    cfg.root.replace("{{ head }}", &head).replace("{{ inertia }}", &app)
+    shell(cfg, "", &app)
+}
+
+/// The root template with `{{ head }}` (asset tags, then `extra`) and `{{ inertia }}` filled.
+fn shell(cfg: &Config, extra: &str, app: &str) -> String {
+    let head = cfg.head.as_ref().map(|f| f()).unwrap_or_default() + extra;
+    cfg.root.replace("{{ head }}", &head).replace("{{ inertia }}", app)
 }
 
 #[cfg(feature = "validate")]

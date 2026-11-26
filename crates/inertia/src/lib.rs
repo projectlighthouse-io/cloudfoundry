@@ -22,6 +22,8 @@
 //! Responses that are not a `Page` pass through.
 
 mod layer;
+#[cfg(feature = "ssr")]
+mod ssr;
 
 pub use layer::{InertiaLayer, InertiaService, layer};
 

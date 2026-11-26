@@ -13,16 +13,24 @@ tower = "0.5"
 tracing = "0.1"
 
 session = { path = "../session", optional = true }
+bytes = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+hyper = { version = "1", features = ["client", "http1"], optional = true }
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"], optional = true }
+tokio = { version = "1", features = ["time"], optional = true }
 validate = { path = "../validate", optional = true }
 
 [features]
 # On an Inertia visit, a validation failure redirects back and the errors
 # arrive as `props.errors` on the next page (flashed through the session).
 validate = ["dep:validate", "dep:session"]
+# Server-side rendering through the Inertia SSR server (`node bootstrap/ssr/ssr.js`).
+ssr = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tokio"]
 
 [dev-dependencies]
+route = { path = "../route", features = ["server"] }
 http-body-util = "0.1"
 securecookie = { path = "../securecookie" }
 session = { path = "../session", features = ["route"] }
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "net"] }
 validate = { path = "../validate", features = ["route"] }
