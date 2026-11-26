@@ -1,0 +1,23 @@
+[package]
+name = "event"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Dispatch typed events to listeners, in process"
+
+[dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+queue = { path = "../queue", optional = true }
+serde = { version = "1", optional = true }
+serde_json = { version = "1", optional = true }
+
+[features]
+# `on_queued`: a listener that runs as a job.
+queue = ["dep:queue", "dep:serde", "dep:serde_json"]
+# `event::command::list` for `event:list`.
+command = ["dep:clap"]
+
+[dev-dependencies]
+queue = { path = "../queue" }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
