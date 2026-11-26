@@ -305,7 +305,8 @@ impl<S: Send + Sync + 'static> Router<S> {
     }
 
     fn flatten(&self, prefix: &str, name_prefix: &str, layers: &[LayerFn], out: &mut Vec<Flat<S>>) {
-        let prefix = format!("{prefix}{}", self.prefix);
+        // A trailing slash on a group prefix (`/` or `/api/`) must not double up.
+        let prefix = format!("{prefix}{}", self.prefix.trim_end_matches('/'));
         let name_prefix = format!("{name_prefix}{}", self.name_prefix);
         let layers: Vec<LayerFn> = layers.iter().chain(&self.layers).cloned().collect();
         for r in &self.routes {

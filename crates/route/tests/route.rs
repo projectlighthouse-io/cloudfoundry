@@ -148,3 +148,20 @@ async fn fallback_serves_unmatched_paths() {
     assert_eq!(call(&routes, Method::GET, "/app.js", empty()).await.2, "static");
     assert_eq!(call(&routes, Method::GET, "/", empty()).await.2, "home");
 }
+
+#[tokio::test]
+async fn group_prefix_with_trailing_slash() {
+    let mut r = Router::<()>::new();
+    r.group("/", |r| {
+        r.get("/go", |_: ()| async { "go" }).name("go");
+        r.group("/api/", |r| {
+            r.get("/x", |_: ()| async { "x" }).name("x");
+            r.get("/", |_: ()| async { "api" }).name("api");
+        });
+    });
+    let routes = r.build(()).unwrap();
+    assert_eq!(routes.url("go", &[]).unwrap(), "/go");
+    assert_eq!(routes.url("x", &[]).unwrap(), "/api/x");
+    assert_eq!(routes.url("api", &[]).unwrap(), "/api");
+    assert_eq!(call(&routes, Method::GET, "/go", empty()).await.2, "go");
+}
