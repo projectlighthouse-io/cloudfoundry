@@ -3,6 +3,7 @@
 
 mod make;
 mod new;
+mod publish;
 
 use std::{
     io::ErrorKind,
@@ -44,6 +45,22 @@ enum Cli {
     /// Action struct with input, output and `impl Action` in src/actions/.
     #[command(name = "make:action")]
     MakeAction { name: String },
+    /// Tower middleware stub in src/middleware/.
+    #[command(name = "make:middleware")]
+    MakeMiddleware { name: String },
+    /// Copy a dependency's stub files into the app.
+    Publish {
+        package: String,
+        /// Show what would be copied.
+        #[arg(long)]
+        list: bool,
+        /// Overwrite existing files.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print a fresh APP_KEY.
+    #[command(name = "key:generate")]
+    KeyGenerate,
     /// Input struct with `impl Validate` in src/requests/.
     #[command(name = "make:request")]
     MakeRequest { name: String },
@@ -61,6 +78,12 @@ fn main() -> ExitCode {
         Cli::MakeHandler { name } => make::run(make::Kind::Handler, &name),
         Cli::MakeAction { name } => make::run(make::Kind::Action, &name),
         Cli::MakeRequest { name } => make::run(make::Kind::Request, &name),
+        Cli::MakeMiddleware { name } => make::run(make::Kind::Middleware, &name),
+        Cli::Publish { package, list, force } => publish::run(&package, list, force),
+        Cli::KeyGenerate => {
+            println!("{}", generate_key());
+            Ok(())
+        }
         Cli::App(args) => return forward(&args),
     };
     match result {
@@ -70,6 +93,14 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// 32 random bytes, base64: the format `securecookie::Keys::parse` reads.
+fn generate_key() -> String {
+    use base64::Engine;
+    let mut k = [0u8; 32];
+    getrandom::fill(&mut k).expect("OS random source");
+    base64::engine::general_purpose::STANDARD.encode(k)
 }
 
 const SQLX_INSTALL: &str =

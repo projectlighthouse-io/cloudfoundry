@@ -2,10 +2,13 @@
 name = "art"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "Scaffolding, dev loop and command proxy for apps built on the toolkit crates"
 
 # Depends on none of the toolkit crates.
 [dependencies]
+base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
+getrandom = "0.3"
 notify = "8"
+serde_json = "1"

@@ -6,6 +6,7 @@ pub enum Kind {
     Handler,
     Action,
     Request,
+    Middleware,
 }
 
 pub fn run(kind: Kind, name: &str) -> Result<(), String> {
@@ -29,6 +30,11 @@ pub fn run(kind: Kind, name: &str) -> Result<(), String> {
             "Build it in src/state.rs and call `.run(input).await`, or route it with `route::action(...)`.",
         ),
         Kind::Request => ("requests", REQUEST, "Take it in a handler as `Valid<Form<requests::{snake}::{pascal}>>`."),
+        Kind::Middleware => (
+            "middleware",
+            MIDDLEWARE,
+            "Add it to a router or group:\n    r.layer(middleware::{snake}::{pascal}Layer);",
+        ),
     };
     let fill = |s: &str| s.replace("{snake}", &snake).replace("{pascal}", &pascal);
 
@@ -125,6 +131,50 @@ pub struct {pascal} {
 impl Validate for {pascal} {
     fn validate(&self, e: &mut Errors) {
         e.check("name", required(&self.name));
+    }
+}
+"#;
+
+const MIDDLEWARE: &str = r#"use std::task::{Context, Poll};
+
+use route::{
+    Body,
+    http::{Request, Response},
+};
+use tower::{Layer, Service};
+
+#[derive(Clone)]
+pub struct {pascal}Layer;
+
+impl<S> Layer<S> for {pascal}Layer {
+    type Service = {pascal}<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        {pascal} { inner }
+    }
+}
+
+#[derive(Clone)]
+pub struct {pascal}<S> {
+    inner: S,
+}
+
+impl<S> Service<Request<Body>> for {pascal}<S>
+where
+    S: Service<Request<Body>, Response = Response<Body>>,
+{
+    type Response = Response<Body>;
+    type Error = S::Error;
+    type Future = S::Future;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), S::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<Body>) -> S::Future {
+        // Inspect or change the request here. To act on the response too,
+        // box an async block around `self.inner.call(req)`.
+        self.inner.call(req)
     }
 }
 "#;

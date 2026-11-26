@@ -47,12 +47,17 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         .replace("{db}", &source.dep("db"))
         .replace("{command}", &source.dep("command"))
         .replace("{action}", &source.dep("action"))
-        .replace("{validate}", &source.dep("validate"));
+        .replace("{validate}", &source.dep("validate"))
+        .replace("{securecookie}", &source.dep("securecookie"))
+        .replace("{session}", &source.dep("session"))
+        .replace("{csrf}", &source.dep("csrf"));
+    let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL=postgres://localhost/{name}\n", crate::generate_key());
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
         (".gitignore", "/target\n.env\n"),
         (".env.example", ENV),
+        (".env", &env),
         ("migrations/.gitkeep", ""),
         ("src/main.rs", MAIN),
         ("src/state.rs", STATE),
@@ -62,6 +67,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         ("src/handlers/mod.rs", HANDLERS),
         ("src/actions/mod.rs", ""),
         ("src/requests/mod.rs", ""),
+        ("src/middleware/mod.rs", ""),
         ("src/commands/mod.rs", COMMANDS),
     ];
     for (file, contents) in files {
@@ -70,7 +76,9 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         fs::write(&file, contents.replace("{name}", name)).map_err(|e| format!("{}: {e}", file.display()))?;
     }
 
-    println!("Created {name}.\n\n  cd {name}\n  cp .env.example .env   # set DATABASE_URL\n  art migrate\n  art dev");
+    println!(
+        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  art publish session   # sessions table migration\n  art migrate\n  art dev"
+    );
     Ok(())
 }
 
@@ -85,41 +93,60 @@ command = { {command}, features = ["action"] }
 db = { {db}, features = ["postgres"] }
 route = { {route}, features = ["server", "command", "action"] }
 validate = { {validate}, features = ["route"] }
+csrf = { {csrf}, features = ["route"] }
+securecookie = { {securecookie} }
+session = { {session}, features = ["postgres", "route", "csrf", "command"] }
 
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = "0.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 "#;
 
-const ENV: &str = "APP_NAME={name}\nDATABASE_URL=postgres://localhost/{name}\n";
+const ENV: &str = "APP_NAME={name}\nAPP_KEY=\nDATABASE_URL=postgres://localhost/{name}\n";
 
 const MAIN: &str = r#"mod actions;
 mod commands;
 mod config;
 mod error;
 mod handlers;
+mod middleware;
 mod requests;
 mod routes;
 mod state;
 
 use db::Db;
 use route::Router;
+use securecookie::{Codec, Keys};
+use session::{PostgresStore, Session};
+use tracing_subscriber::EnvFilter;
 
 use crate::{config::Config, error::AppError, state::{App, Primary}};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
+        .init();
+
     let cfg = Config::from_env()?;
+    let codec = Codec::new(Keys::parse(&cfg.app_key).map_err(|e| AppError::Config(format!("APP_KEY: {e}")))?);
 
     let db: Db<Primary> = Db::connect(&cfg.database_url).await?;
+    let sessions = PostgresStore::new(db.pool().clone());
 
     let app = App::new(cfg, db);
 
-    let router = routes::register(Router::new()).build(app.clone())?;
+    let router = routes::register(Router::new())
+        .layer(session::layer(sessions.clone(), codec))
+        .layer(csrf::layer::<Session>())
+        .build(app.clone())?;
 
-    commands::register(&router).run(app, std::env::args()).await;
+    commands::register(&router, sessions).run(app, std::env::args()).await;
     Ok(())
 }
 "#;
@@ -151,6 +178,7 @@ const CONFIG: &str = r#"use crate::error::AppError;
 /// Typed config, read once from the environment (and `.env` if present).
 pub struct Config {
     pub app_name: String,
+    pub app_key: String,
     pub database_url: String,
 }
 
@@ -159,6 +187,7 @@ impl Config {
         let _ = dotenvy::dotenv();
         Ok(Self {
             app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "{name}".into()),
+            app_key: required("APP_KEY")?,
             database_url: required("DATABASE_URL")?,
         })
     }
@@ -206,7 +235,7 @@ impl From<route::BuildError> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response<Body> {
-        eprintln!("{self}");
+        tracing::error!("{self}");
         (StatusCode::INTERNAL_SERVER_ERROR, "server error").into_response()
     }
 }
@@ -240,13 +269,15 @@ pub async fn health(cx: Cx<App>) -> Result<&'static str, AppError> {
 
 const COMMANDS: &str = r#"use command::Commands;
 use route::Routes;
+use session::PostgresStore;
 
 use crate::state::App;
 
 /// Every command the binary runs. `serve` runs when none is given.
-pub fn register(routes: &Routes) -> Commands<App> {
+pub fn register(routes: &Routes, sessions: PostgresStore) -> Commands<App> {
     Commands::new()
         .default("serve", route::command::serve(routes))
         .add("route:list", route::command::list(routes))
+        .add("session:prune", session::command::prune(sessions))
 }
 "#;
