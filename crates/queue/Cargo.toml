@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Persist, claim, run and retry jobs"
 
 [dependencies]
+action = { path = "../action", optional = true }
 serde = "1"
 serde_json = "1"
 tokio = { version = "1", features = ["rt", "time", "sync", "macros", "signal"] }
@@ -19,10 +20,13 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"]
 postgres = ["dep:sqlx", "sqlx/postgres"]
 sqlite = ["dep:sqlx", "sqlx/sqlite"]
 mysql = ["dep:sqlx", "sqlx/mysql"]
+# `ActionJob`: an `Action` whose `Input` is serializable runs as a job.
+action = ["dep:action"]
 # `queue::command::{work, retry}` for the `command` crate.
 command = ["dep:clap"]
 
 [dev-dependencies]
+action = { path = "../action" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
 

@@ -91,6 +91,13 @@ impl Store for MemoryStore {
         Ok(())
     }
 
+    async fn extend(&self, id: JobId, visibility: Duration) -> Result<(), Error> {
+        if let Some(row) = self.state.lock().unwrap().jobs.iter_mut().find(|r| r.id == id) {
+            row.reserved_until = Some(Instant::now() + visibility);
+        }
+        Ok(())
+    }
+
     async fn retry_failed(&self, id: JobId) -> Result<Option<JobId>, Error> {
         let mut s = self.state.lock().unwrap();
         let Some(i) = s.failed.iter().position(|(j, _)| j.id == id) else { return Ok(None) };

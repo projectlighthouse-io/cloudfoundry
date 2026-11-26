@@ -22,6 +22,8 @@
 mod memory;
 mod worker;
 
+#[cfg(feature = "action")]
+mod action_job;
 #[cfg(feature = "command")]
 pub mod command;
 #[cfg(feature = "mysql")]
@@ -31,6 +33,8 @@ mod postgres;
 #[cfg(feature = "sqlite")]
 mod sqlite;
 
+#[cfg(feature = "action")]
+pub use action_job::{ActionJob, Outcome};
 pub use memory::MemoryStore;
 #[cfg(feature = "mysql")]
 pub use mysql::MysqlStore;
@@ -116,6 +120,14 @@ pub trait Store: Send + Sync + 'static {
     fn fail(&self, id: JobId, error: &str, retry_in: Option<Duration>) -> impl Future<Output = Result<(), Error>> + Send;
     /// Move a failed job back to its queue with fresh attempts. `None` if no such failed job.
     fn retry_failed(&self, id: JobId) -> impl Future<Output = Result<Option<JobId>, Error>> + Send;
+
+    /// Hold a running job for another `visibility`. The worker calls this
+    /// while the job runs, so a long job is not claimed again. A store that
+    /// keeps the default cannot extend: its jobs must finish within `visibility`.
+    fn extend(&self, id: JobId, visibility: Duration) -> impl Future<Output = Result<(), Error>> + Send {
+        let _ = (id, visibility);
+        async { Ok(()) }
+    }
 }
 
 /// Push jobs. Cheap to clone.

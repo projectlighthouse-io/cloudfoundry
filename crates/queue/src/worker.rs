@@ -83,9 +83,9 @@ impl<St: Store, C: Send + Sync + 'static> Worker<St, C> {
         self
     }
 
-    /// How long a claimed job is held. Must exceed the longest job, or a slow
-    /// job is claimed again while still running.
-    /// ponytail: fixed hold; add a heartbeat that extends it when jobs outgrow any fixed value.
+    /// How long a claimed job is held without a heartbeat. The worker extends
+    /// it every third of this while the job runs, so it bounds how long a job
+    /// from a dead worker waits, not how long a job may run.
     pub fn visibility(mut self, d: Duration) -> Self {
         self.visibility = d;
         self
@@ -100,7 +100,7 @@ impl<St: Store, C: Send + Sync + 'static> Worker<St, C> {
     /// Run until `shutdown` resolves, then stop claiming and wait for running
     /// jobs to finish.
     pub async fn run(self, shutdown: impl Future<Output = ()>) {
-        let shared = Arc::new(Shared { queue: self.queue, cx: self.cx, handlers: self.handlers });
+        let shared = Arc::new(Shared { queue: self.queue, cx: self.cx, handlers: self.handlers, visibility: self.visibility });
         let mut running: JoinSet<()> = JoinSet::new();
         tokio::pin!(shutdown);
 
@@ -149,6 +149,7 @@ struct Shared<St, C> {
     queue: Queue<St>,
     cx: Arc<C>,
     handlers: HashMap<String, Handler<C>>,
+    visibility: Duration,
 }
 
 impl<St: Store, C: Send + Sync + 'static> Shared<St, C> {
@@ -165,7 +166,20 @@ impl<St: Store, C: Send + Sync + 'static> Shared<St, C> {
         }
 
         // Run in its own task so a panic is caught and recorded like an error.
-        let outcome = tokio::spawn((h.run)(self.cx.clone(), job.payload.clone())).await;
+        let mut task = tokio::spawn((h.run)(self.cx.clone(), job.payload.clone()));
+        // Heartbeat: extend the hold every third of it while the job runs.
+        let every = (self.visibility / 3).max(Duration::from_millis(10));
+        let mut beat = tokio::time::interval_at(tokio::time::Instant::now() + every, every);
+        let outcome = loop {
+            tokio::select! {
+                done = &mut task => break done,
+                _ = beat.tick() => {
+                    if let Err(e) = store.extend(job.id, self.visibility).await {
+                        tracing::warn!(job = %job.id, name = %job.name, "extending job hold failed: {e}");
+                    }
+                }
+            }
+        };
         let error = match outcome {
             Ok(Ok(())) => return record(store.complete(job.id).await, &job),
             Ok(Err(e)) => e.to_string(),

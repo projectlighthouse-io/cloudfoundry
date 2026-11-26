@@ -84,6 +84,12 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    async fn extend(&self, id: JobId, visibility: Duration) -> Result<(), Error> {
+        let sql = format!("update jobs set reserved_until = {NOW} + ? where id = ?");
+        sqlx::query(&sql).bind(visibility.as_secs() as i64).bind(id.0).execute(&self.0).await?;
+        Ok(())
+    }
+
     async fn retry_failed(&self, id: JobId) -> Result<Option<JobId>, Error> {
         let mut tx = self.0.begin().await?;
         let sql = format!(

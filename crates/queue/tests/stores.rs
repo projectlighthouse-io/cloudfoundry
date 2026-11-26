@@ -41,6 +41,7 @@ async fn check<St: Store>(q: &Queue<St>) {
     assert_eq!((again.len(), again[0].attempts, again[0].payload.as_str()), (1, 2, "0"));
 
     // Complete one, fail one for good, retry it exactly once.
+    q.store().extend(ids[3], hold).await.unwrap();
     q.store().complete(ids[1]).await.unwrap();
     q.store().fail(ids[2], "dead", None).await.unwrap();
     let requeued = q.store().retry_failed(ids[2]).await.unwrap().expect("was failed");

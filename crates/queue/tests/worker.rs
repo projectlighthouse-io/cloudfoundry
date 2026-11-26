@@ -150,3 +150,38 @@ async fn shutdown_waits_for_running_jobs() {
     assert_eq!(cx.slow_done.load(SeqCst), 1, "running job finished before run() returned");
     assert_eq!(q.store().pending(), 0);
 }
+
+#[derive(Serialize, Deserialize)]
+struct Long;
+impl Job for Long {
+    const NAME: &'static str = "long";
+    type Context = Arc<Cx>;
+    async fn run(self, cx: &Arc<Cx>) -> Result<(), JobError> {
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        cx.slow_done.fetch_add(1, SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn heartbeat_keeps_long_jobs_held() {
+    let q = Queue::new(MemoryStore::new());
+    let cx = Arc::new(Cx::default());
+    q.push(Long).await.unwrap();
+
+    let probe = q.clone();
+    let watcher = tokio::spawn(async move {
+        // Well past the 150ms hold: without the heartbeat the job would be claimable.
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        probe.store().claim(&["default".into()], 1, Duration::from_secs(5)).await.unwrap().len()
+    });
+    let store = q.clone();
+    Worker::new(q.clone(), cx.clone())
+        .poll(Duration::from_millis(10))
+        .visibility(Duration::from_millis(150))
+        .register::<Long>()
+        .run(async move { until_idle(store.store()).await })
+        .await;
+    assert_eq!(watcher.await.unwrap(), 0, "still held while running");
+    assert_eq!(cx.slow_done.load(SeqCst), 1, "ran once");
+}
