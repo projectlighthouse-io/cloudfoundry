@@ -40,7 +40,7 @@ pub fn run(package: &str, list: bool, force: bool) -> Result<(), String> {
     let art = &pkg["metadata"]["art"];
     let table = art["publish"].as_object().ok_or_else(|| format!("`{package}` has nothing to publish"))?;
 
-    let ts = timestamp();
+    let ts = next_version(&timestamp());
     for (from, to) in table {
         let Some(to) = to.as_str() else { continue };
         let dest = PathBuf::from(to.replace("{timestamp}", &ts));
@@ -77,6 +77,22 @@ fn already_published(template: &str) -> Option<PathBuf> {
     fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
         p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with(prefix) && n.ends_with(after))
     })
+}
+
+/// sqlx uses the timestamp as the migration version, so two publishes in the
+/// same second would collide. Take one past the newest existing version.
+fn next_version(now: &str) -> String {
+    let newest = fs::read_dir("migrations")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.split('_').next()?.parse::<u64>().ok())
+        .max();
+    let now: u64 = now.parse().unwrap_or(0);
+    match newest {
+        Some(n) if n >= now => (n + 1).to_string(),
+        _ => now.to_string(),
+    }
 }
 
 /// `YYYYMMDDHHMMSS` in UTC, as sqlx-cli names migrations.
