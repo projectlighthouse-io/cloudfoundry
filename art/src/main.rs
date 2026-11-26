@@ -29,6 +29,9 @@ enum Cli {
         /// Depend on the toolkit crates from this git repository.
         #[arg(long)]
         git: Option<String>,
+        /// Database: postgres, sqlite or mysql.
+        #[arg(long, default_value = "postgres", value_parser = ["postgres", "sqlite", "mysql"])]
+        driver: String,
     },
     /// Run the app, rebuilding and restarting on change.
     Dev,
@@ -96,7 +99,7 @@ enum Cli {
 
 fn main() -> ExitCode {
     let result = match Cli::parse() {
-        Cli::New { name, path, git } => new::run(&name, path, git),
+        Cli::New { name, path, git, driver } => new::run(&name, path, git, &driver),
         Cli::Dev => dev(),
         Cli::Migrate => sqlx(&["migrate", "run"]).and_then(|()| refresh_query_cache()),
         Cli::MigrateRollback => sqlx(&["migrate", "revert"]),
@@ -136,7 +139,7 @@ fn generate_key() -> String {
 }
 
 const SQLX_INSTALL: &str =
-    "sqlx-cli is not installed. Install it with: cargo install sqlx-cli --no-default-features --features rustls,postgres";
+    "sqlx-cli is not installed (or lacks this database). Install it with: cargo install sqlx-cli --no-default-features --features rustls,postgres,sqlite,mysql";
 
 fn status(cmd: &mut Command, missing: &str) -> Result<(), String> {
     match cmd.status() {

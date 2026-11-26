@@ -17,7 +17,7 @@ impl Source {
     }
 }
 
-pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(), String> {
+pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str) -> Result<(), String> {
     let valid = name.starts_with(|c: char| c.is_ascii_lowercase())
         && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
     if !valid {
@@ -56,12 +56,14 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         .replace("{queue}", &source.dep("queue"))
         .replace("{event}", &source.dep("event"))
         .replace("{sse}", &source.dep("sse"));
-    let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL=postgres://localhost/{name}\n", crate::generate_key());
+    let url = database_url(driver, name);
+    let env_example = format!("APP_NAME={name}\nAPP_KEY=\nDATABASE_URL={url}\n");
+    let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL={url}\n", crate::generate_key());
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
-        (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n"),
-        (".env.example", ENV),
+        (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n/*.db*\n"),
+        (".env.example", &env_example),
         (".env", &env),
         ("migrations/.gitkeep", ""),
         ("src/main.rs", MAIN),
@@ -90,11 +92,13 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
     for (file, contents) in files {
         let file = dir.join(file);
         fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
-        fs::write(&file, contents.replace("{name}", name)).map_err(|e| format!("{}: {e}", file.display()))?;
+        let contents = for_driver(&contents.replace("{name}", name), driver);
+        fs::write(&file, contents).map_err(|e| format!("{}: {e}", file.display()))?;
     }
 
+    let flag = if driver == "postgres" { String::new() } else { format!(" --driver {driver}") };
     println!(
-        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session   # sessions table migration\n  art publish queue     # jobs tables migration\n  art migrate\n  art dev"
+        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session{flag}   # sessions table migration\n  art publish queue{flag}     # jobs tables migration\n  art migrate\n  art dev"
     );
     Ok(())
 }
@@ -131,7 +135,26 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 "#;
 
-const ENV: &str = "APP_NAME={name}\nAPP_KEY=\nDATABASE_URL=postgres://localhost/{name}\n";
+fn database_url(driver: &str, name: &str) -> String {
+    match driver {
+        "sqlite" => format!("sqlite://{name}.db?mode=rwc"),
+        "mysql" => format!("mysql://root@localhost/{name}"),
+        _ => format!("postgres://localhost/{name}"),
+    }
+}
+
+/// Templates are written for Postgres; other drivers swap the few names
+/// that differ (sqlx type, store types, Cargo features, the database URL).
+fn for_driver(text: &str, driver: &str) -> String {
+    let (db, store, feature) = match driver {
+        "sqlite" => ("Sqlite", "SqliteStore", "\"sqlite\""),
+        "mysql" => ("MySql", "MysqlStore", "\"mysql\""),
+        _ => return text.to_owned(),
+    };
+    text.replace("handle!(pub Primary: Postgres)", &format!("handle!(pub Primary: {db})"))
+        .replace("PostgresStore", store)
+        .replace("\"postgres\"", feature)
+}
 
 const MAIN: &str = r#"mod actions;
 mod commands;
