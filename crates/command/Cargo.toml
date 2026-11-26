@@ -7,3 +7,9 @@ description = "Register and dispatch commands in the app binary"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+
+action = { path = "../action", optional = true }
+
+[features]
+# `command::action(a)` runs an `Action` whose `Input: clap::Args`.
+action = ["dep:action"]

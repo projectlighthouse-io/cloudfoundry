@@ -119,6 +119,30 @@ impl<S> Commands<S> {
     }
 }
 
+/// Run an `Action` as a command: `.add("runs:start", command::action(start_run))`.
+/// Its `Input` is the command's `clap::Args`; its `Output` is a `Result`.
+#[cfg(feature = "action")]
+pub fn action<S, A>(a: A) -> impl AsyncFnOnce(&S, A::Input) -> Result<(), String> + use<S, A>
+where
+    A: action::Action,
+    A::Output: Outcome,
+{
+    async move |_: &S, input: A::Input| a.run(input).await.into_result()
+}
+
+/// An action output a command can report: `Result<T, E>` with `E: Display`.
+#[cfg(feature = "action")]
+pub trait Outcome {
+    fn into_result(self) -> Result<(), String>;
+}
+
+#[cfg(feature = "action")]
+impl<T, E: Display> Outcome for Result<T, E> {
+    fn into_result(self) -> Result<(), String> {
+        self.map(drop).map_err(|e| e.to_string())
+    }
+}
+
 enum Failure {
     Usage(clap::Error),
     Command(String),
@@ -168,5 +192,22 @@ mod tests {
 
         assert!(matches!(block_on(commands().dispatch(&state, ["app", "x:fail"])), Err(Failure::Command(m)) if m == "boom"));
         assert!(matches!(block_on(commands().dispatch(&state, ["app", "nope"])), Err(Failure::Usage(_))));
+    }
+
+    #[cfg(feature = "action")]
+    #[test]
+    fn runs_actions() {
+        struct Check;
+        impl action::Action for Check {
+            type Input = SetArgs;
+            type Output = Result<u32, String>;
+            async fn run(&self, a: SetArgs) -> Result<u32, String> {
+                if a.n > 5 { Err("too big".into()) } else { Ok(a.n) }
+            }
+        }
+        let c = || Commands::<Cell<u32>>::new().add("x:check", super::action(Check));
+        let state = Cell::new(0);
+        assert!(block_on(c().dispatch(&state, ["app", "x:check", "--n", "1"])).is_ok());
+        assert!(matches!(block_on(c().dispatch(&state, ["app", "x:check"])), Err(Failure::Command(m)) if m == "too big"));
     }
 }
