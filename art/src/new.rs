@@ -62,7 +62,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
-        (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n/*.db*\n"),
+        (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n/bootstrap/ssr\n/*.db*\n"),
         (".env.example", &env_example),
         (".env", &env),
         ("migrations/.gitkeep", ""),
@@ -82,6 +82,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         ("package.json", PACKAGE_JSON),
         ("vite.config.ts", VITE_CONFIG),
         ("resources/js/app.ts", APP_TS),
+        ("resources/js/ssr.ts", SSR_TS),
         ("resources/js/pages/home.vue", HOME_VUE),
         ("resources/js/types/Home.ts", HOME_TS),
         (".cargo/config.toml", CARGO_CONFIG),
@@ -117,7 +118,7 @@ validate = { {validate}, features = ["route"] }
 csrf = { {csrf}, features = ["route"] }
 securecookie = { {securecookie} }
 session = { {session}, features = ["postgres", "route", "csrf", "command"] }
-inertia = { {inertia}, features = ["validate"] }
+inertia = { {inertia}, features = ["validate", "ssr"] }
 vite = { {vite} }
 queue = { {queue}, features = ["postgres", "command"] }
 event = { {event}, features = ["queue", "command"] }
@@ -203,15 +204,19 @@ async fn main() -> Result<(), AppError> {
 
     let app = App::new(cfg, db, queue.clone(), events.clone());
 
+    let mut pages = inertia::layer()
+        .root_template("resources/views/app.html")
+        .pages_dir("resources/js/pages")
+        .version(&asset_version)
+        .head(move || vite.tags());
+    if let Some(url) = &app.cfg.ssr_url {
+        pages = pages.ssr(url);
+    }
+
     let router = routes::register(Router::new())
         .layer(session::layer(sessions.clone(), codec))
         .layer(csrf::layer::<Session>())
-        .layer(
-            inertia::layer()
-                .root_template("resources/views/app.html")
-                .version(&asset_version)
-                .head(move || vite.tags()),
-        )
+        .layer(pages)
         .fallback(ServeDir::new("public"))
         .build(app.clone())?;
 
@@ -256,6 +261,8 @@ pub struct Config {
     pub app_name: String,
     pub app_key: String,
     pub database_url: String,
+    /// The Inertia SSR server, e.g. `http://127.0.0.1:13714`. Unset: render on the client.
+    pub ssr_url: Option<String>,
 }
 
 impl Config {
@@ -265,6 +272,7 @@ impl Config {
             app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "{name}".into()),
             app_key: required("APP_KEY")?,
             database_url: required("DATABASE_URL")?,
+            ssr_url: std::env::var("INERTIA_SSR_URL").ok().filter(|u| !u.is_empty()),
         })
     }
 }
@@ -413,7 +421,8 @@ const PACKAGE_JSON: &str = r#"{
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build && vite build --ssr resources/js/ssr.ts",
+    "ssr": "node bootstrap/ssr/ssr.js"
   },
   "dependencies": {
     "@inertiajs/vue3": "^3.11.0",
@@ -449,32 +458,56 @@ function hotFile(): Plugin {
   }
 }
 
-export default defineConfig(({ command }) => ({
+export default defineConfig(({ command, isSsrBuild }) => ({
   base: command === 'build' ? '/build/' : '/',
   publicDir: false,
   plugins: [vue(), hotFile()],
-  build: {
-    manifest: true,
-    outDir: 'public/build',
-    rollupOptions: { input: 'resources/js/app.ts' },
-  },
+  // The SSR bundle (`vite build --ssr resources/js/ssr.ts`) runs in Node: `npm run ssr`.
+  build: isSsrBuild
+    ? { outDir: 'bootstrap/ssr' }
+    : { manifest: true, outDir: 'public/build', rollupOptions: { input: 'resources/js/app.ts' } },
   server: { port: 5173, strictPort: true, origin: 'http://localhost:5173' },
 }))
 "#;
 
 const APP_TS: &str = r#"import { createInertiaApp } from '@inertiajs/vue3'
-import { createApp, h, type DefineComponent } from 'vue'
+import { createApp, createSSRApp, h, type DefineComponent } from 'vue'
 
 const pages = import.meta.glob<DefineComponent>('./pages/**/*.vue')
 
 createInertiaApp({
   resolve: (page) => pages[`./pages/${page}.vue`](),
   setup({ el, App, props, plugin }) {
-    createApp({ render: () => h(App, props) })
+    // Hydrate markup the SSR server rendered; otherwise render from scratch.
+    const create = el?.hasAttribute('data-server-rendered') ? createSSRApp : createApp
+    create({ render: () => h(App, props) })
       .use(plugin)
       .mount(el)
   },
 })
+"#;
+
+const SSR_TS: &str = r#"import { createInertiaApp } from '@inertiajs/vue3'
+import createServer from '@inertiajs/vue3/server'
+import { createSSRApp, h, type DefineComponent } from 'vue'
+import { renderToString } from 'vue/server-renderer'
+
+const pages = import.meta.glob<DefineComponent>('./pages/**/*.vue')
+
+// The app posts each first visit's page to http://127.0.0.1:13714/render
+// when INERTIA_SSR_URL is set. Bound to localhost: not for the outside world.
+createServer(
+  (page) =>
+    createInertiaApp({
+      page,
+      render: renderToString,
+      resolve: (component) => pages[`./pages/${component}.vue`](),
+      setup({ App, props, plugin }) {
+        return createSSRApp({ render: () => h(App, props) }).use(plugin)
+      },
+    }),
+  { host: '127.0.0.1' },
+)
 "#;
 
 const HOME_VUE: &str = r#"<script setup lang="ts">

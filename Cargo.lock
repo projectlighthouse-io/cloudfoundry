@@ -971,7 +971,10 @@ dependencies = [
 name = "inertia"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "route",
  "securecookie",
  "serde",

@@ -69,6 +69,8 @@ enum Cli {
         #[arg(long)]
         listener: bool,
     },
+    /// Run the Inertia SSR server built by `art build` (`npm run ssr`).
+    Ssr,
     /// Vite production build, then `cargo build --release`.
     Build,
     /// Tower middleware stub in src/middleware/.
@@ -111,6 +113,7 @@ fn main() -> ExitCode {
         Cli::MakePage { path } => make::run(make::Kind::Page, &path),
         Cli::MakeResponse { name } => make::run(make::Kind::Response, &name),
         Cli::Build => build(),
+        Cli::Ssr => status(Command::new("npm").args(["run", "ssr"]), NPM_MISSING),
         Cli::MakeJob { name } => make::run(make::Kind::Job, &name),
         Cli::MakeCommand { name } => make::run(make::Kind::Command, &name),
         Cli::MakeEvent { name, listener } => make::run(make::Kind::Event { listener }, &name),
