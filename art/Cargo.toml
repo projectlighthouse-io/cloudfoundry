@@ -1,0 +1,11 @@
+[package]
+name = "art"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Scaffolding, dev loop and command proxy for apps built on the toolkit crates"
+
+# Depends on none of the toolkit crates.
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+notify = "8"
