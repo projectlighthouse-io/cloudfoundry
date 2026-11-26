@@ -50,12 +50,14 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         .replace("{validate}", &source.dep("validate"))
         .replace("{securecookie}", &source.dep("securecookie"))
         .replace("{session}", &source.dep("session"))
-        .replace("{csrf}", &source.dep("csrf"));
+        .replace("{csrf}", &source.dep("csrf"))
+        .replace("{inertia}", &source.dep("inertia"))
+        .replace("{vite}", &source.dep("vite"));
     let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL=postgres://localhost/{name}\n", crate::generate_key());
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
-        (".gitignore", "/target\n.env\n"),
+        (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n"),
         (".env.example", ENV),
         (".env", &env),
         ("migrations/.gitkeep", ""),
@@ -68,6 +70,14 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
         ("src/actions/mod.rs", ""),
         ("src/requests/mod.rs", ""),
         ("src/middleware/mod.rs", ""),
+        ("src/responses/mod.rs", "pub mod home;\n"),
+        ("src/responses/home.rs", HOME_PROPS),
+        ("package.json", PACKAGE_JSON),
+        ("vite.config.ts", VITE_CONFIG),
+        ("resources/js/app.ts", APP_TS),
+        ("resources/js/pages/home.vue", HOME_VUE),
+        ("resources/views/app.html", APP_HTML),
+        ("public/.gitkeep", ""),
         ("src/commands/mod.rs", COMMANDS),
     ];
     for (file, contents) in files {
@@ -77,7 +87,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>) -> Result<(),
     }
 
     println!(
-        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  art publish session   # sessions table migration\n  art migrate\n  art dev"
+        "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session   # sessions table migration\n  art migrate\n  art dev"
     );
     Ok(())
 }
@@ -96,6 +106,8 @@ validate = { {validate}, features = ["route"] }
 csrf = { {csrf}, features = ["route"] }
 securecookie = { {securecookie} }
 session = { {session}, features = ["postgres", "route", "csrf", "command"] }
+inertia = { {inertia}, features = ["validate"] }
+vite = { {vite} }
 
 clap = { version = "4", features = ["derive"] }
 dotenvy = "0.15"
@@ -103,6 +115,7 @@ serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tower = "0.5"
+tower-http = { version = "0.6", features = ["fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 "#;
@@ -116,6 +129,7 @@ mod error;
 mod handlers;
 mod middleware;
 mod requests;
+mod responses;
 mod routes;
 mod state;
 
@@ -123,6 +137,8 @@ use db::Db;
 use route::Router;
 use securecookie::{Codec, Keys};
 use session::{PostgresStore, Session};
+use tower_http::services::ServeDir;
+use vite::Vite;
 use tracing_subscriber::EnvFilter;
 
 use crate::{config::Config, error::AppError, state::{App, Primary}};
@@ -136,6 +152,9 @@ async fn main() -> Result<(), AppError> {
     let cfg = Config::from_env()?;
     let codec = Codec::new(Keys::parse(&cfg.app_key).map_err(|e| AppError::Config(format!("APP_KEY: {e}")))?);
 
+    let vite = Vite::load("public", &["resources/js/app.ts"]).map_err(|e| AppError::Config(e.to_string()))?;
+    let asset_version = vite.manifest_hash().to_owned();
+
     let db: Db<Primary> = Db::connect(&cfg.database_url).await?;
     let sessions = PostgresStore::new(db.pool().clone());
 
@@ -144,6 +163,13 @@ async fn main() -> Result<(), AppError> {
     let router = routes::register(Router::new())
         .layer(session::layer(sessions.clone(), codec))
         .layer(csrf::layer::<Session>())
+        .layer(
+            inertia::layer()
+                .root_template("resources/views/app.html")
+                .version(&asset_version)
+                .head(move || vite.tags()),
+        )
+        .fallback(ServeDir::new("public"))
         .build(app.clone())?;
 
     commands::register(&router, sessions).run(app, std::env::args()).await;
@@ -253,12 +279,13 @@ pub fn register(mut r: Router<App>) -> Router<App> {
 }
 "#;
 
-const HANDLERS: &str = r#"use route::Cx;
+const HANDLERS: &str = r#"use inertia::Page;
+use route::Cx;
 
-use crate::{error::AppError, state::App};
+use crate::{error::AppError, responses::home::Home, state::App};
 
-pub async fn home(cx: Cx<App>) -> String {
-    format!("{} is running", cx.cfg.app_name)
+pub async fn home(cx: Cx<App>) -> Page<Home> {
+    inertia::render("home", Home { app_name: cx.cfg.app_name.clone() })
 }
 
 pub async fn health(cx: Cx<App>) -> Result<&'static str, AppError> {
@@ -280,4 +307,107 @@ pub fn register(routes: &Routes, sessions: PostgresStore) -> Commands<App> {
         .add("route:list", route::command::list(routes))
         .add("session:prune", session::command::prune(sessions))
 }
+"#;
+
+const HOME_PROPS: &str = r#"use serde::Serialize;
+
+/// Props for `resources/js/pages/home.vue`.
+#[derive(Serialize)]
+pub struct Home {
+    pub app_name: String,
+}
+"#;
+
+const PACKAGE_JSON: &str = r#"{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@inertiajs/vue3": "^3.11.0",
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "vite": "^8.4.0"
+  }
+}
+"#;
+
+const VITE_CONFIG: &str = r#"import fs from 'node:fs'
+import vue from '@vitejs/plugin-vue'
+import { defineConfig, type Plugin } from 'vite'
+
+// While the dev server runs, public/hot holds its URL. The app's `vite` crate
+// reads it per request and points asset tags at the dev server.
+function hotFile(): Plugin {
+  const remove = () => fs.rmSync('public/hot', { force: true })
+  return {
+    name: 'hot-file',
+    configureServer(server) {
+      server.httpServer?.once('listening', () => {
+        fs.writeFileSync('public/hot', `http://localhost:${server.config.server.port}`)
+      })
+      process.once('exit', remove)
+      for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+        process.once(signal, () => process.exit())
+      }
+    },
+  }
+}
+
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/build/' : '/',
+  publicDir: false,
+  plugins: [vue(), hotFile()],
+  build: {
+    manifest: true,
+    outDir: 'public/build',
+    rollupOptions: { input: 'resources/js/app.ts' },
+  },
+  server: { port: 5173, strictPort: true, origin: 'http://localhost:5173' },
+}))
+"#;
+
+const APP_TS: &str = r#"import { createInertiaApp } from '@inertiajs/vue3'
+import { createApp, h, type DefineComponent } from 'vue'
+
+const pages = import.meta.glob<DefineComponent>('./pages/**/*.vue')
+
+createInertiaApp({
+  resolve: (page) => pages[`./pages/${page}.vue`](),
+  setup({ el, App, props, plugin }) {
+    createApp({ render: () => h(App, props) })
+      .use(plugin)
+      .mount(el)
+  },
+})
+"#;
+
+const HOME_VUE: &str = r#"<script setup lang="ts">
+defineProps<{ app_name: string }>()
+</script>
+
+<template>
+  <main>
+    <h1>{{ app_name }}</h1>
+    <p>It works.</p>
+  </main>
+</template>
+"#;
+
+const APP_HTML: &str = r#"<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{name}</title>
+    {{ head }}
+  </head>
+  <body>
+    {{ inertia }}
+  </body>
+</html>
 "#;

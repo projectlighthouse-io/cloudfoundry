@@ -7,10 +7,14 @@ pub enum Kind {
     Action,
     Request,
     Middleware,
+    Page,
+    Response,
 }
 
 pub fn run(kind: Kind, name: &str) -> Result<(), String> {
-    let snake = snake_case(name);
+    // A page is a path (`runs/show`): the Vue file mirrors it, the Rust module flattens it.
+    let path = name.trim_matches('/').to_owned();
+    let snake = snake_case(&path.replace('/', "_"));
     let valid = snake.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
         && snake.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
     if !valid {
@@ -30,13 +34,24 @@ pub fn run(kind: Kind, name: &str) -> Result<(), String> {
             "Build it in src/state.rs and call `.run(input).await`, or route it with `route::action(...)`.",
         ),
         Kind::Request => ("requests", REQUEST, "Take it in a handler as `Valid<Form<requests::{snake}::{pascal}>>`."),
+        Kind::Page => (
+            "responses",
+            PAGE_PROPS,
+            "Render it from a handler:\n    inertia::render(\"{path}\", responses::{snake}::{pascal} {})",
+        ),
+        Kind::Response => ("responses", RESPONSE, "Build it from a domain value with `{pascal}::from(&value)`."),
         Kind::Middleware => (
             "middleware",
             MIDDLEWARE,
             "Add it to a router or group:\n    r.layer(middleware::{snake}::{pascal}Layer);",
         ),
     };
-    let fill = |s: &str| s.replace("{snake}", &snake).replace("{pascal}", &pascal);
+    let fill = |s: &str| s.replace("{snake}", &snake).replace("{pascal}", &pascal).replace("{path}", &path);
+
+    let vue = matches!(kind, Kind::Page).then(|| Path::new("resources/js/pages").join(format!("{path}.vue")));
+    if let Some(v) = vue.as_ref().filter(|v| v.exists()) {
+        return Err(format!("{} already exists", v.display()));
+    }
 
     let dir = Path::new("src").join(dir);
     let mod_rs = dir.join("mod.rs");
@@ -58,6 +73,11 @@ pub fn run(kind: Kind, name: &str) -> Result<(), String> {
         .and_then(|mut f| write!(f, "{sep}pub mod {snake};\n"))
         .map_err(|e| format!("{}: {e}", mod_rs.display()))?;
 
+    if let Some(v) = &vue {
+        fs::create_dir_all(v.parent().unwrap()).map_err(|e| e.to_string())?;
+        fs::write(v, fill(PAGE_VUE)).map_err(|e| format!("{}: {e}", v.display()))?;
+        println!("Created {}", v.display());
+    }
     println!("Created {}\n\n{}", file.display(), fill(hint));
     Ok(())
 }
@@ -133,6 +153,37 @@ impl Validate for {pascal} {
         e.check("name", required(&self.name));
     }
 }
+"#;
+
+const PAGE_PROPS: &str = r#"use serde::Serialize;
+
+/// Props for `resources/js/pages/{path}.vue`.
+#[derive(Serialize)]
+pub struct {pascal} {}
+"#;
+
+const PAGE_VUE: &str = r#"<script setup lang="ts">
+defineProps<{}>()
+</script>
+
+<template>
+  <main>{path}</main>
+</template>
+"#;
+
+const RESPONSE: &str = r#"use serde::Serialize;
+
+/// What a response shows of a domain value. Keeps database rows out of responses.
+#[derive(Serialize)]
+pub struct {pascal} {
+    pub id: i64,
+}
+
+// impl From<&Run> for {pascal} {
+//     fn from(run: &Run) -> Self {
+//         Self { id: run.id }
+//     }
+// }
 "#;
 
 const MIDDLEWARE: &str = r#"use std::task::{Context, Poll};

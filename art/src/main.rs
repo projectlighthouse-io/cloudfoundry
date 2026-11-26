@@ -45,6 +45,14 @@ enum Cli {
     /// Action struct with input, output and `impl Action` in src/actions/.
     #[command(name = "make:action")]
     MakeAction { name: String },
+    /// Props struct in src/responses/ plus its Vue page, e.g. `runs/show`.
+    #[command(name = "make:page")]
+    MakePage { path: String },
+    /// View struct with a `From` stub in src/responses/.
+    #[command(name = "make:response")]
+    MakeResponse { name: String },
+    /// Vite production build, then `cargo build --release`.
+    Build,
     /// Tower middleware stub in src/middleware/.
     #[command(name = "make:middleware")]
     MakeMiddleware { name: String },
@@ -79,6 +87,9 @@ fn main() -> ExitCode {
         Cli::MakeAction { name } => make::run(make::Kind::Action, &name),
         Cli::MakeRequest { name } => make::run(make::Kind::Request, &name),
         Cli::MakeMiddleware { name } => make::run(make::Kind::Middleware, &name),
+        Cli::MakePage { path } => make::run(make::Kind::Page, &path),
+        Cli::MakeResponse { name } => make::run(make::Kind::Response, &name),
+        Cli::Build => build(),
         Cli::Publish { package, list, force } => publish::run(&package, list, force),
         Cli::KeyGenerate => {
             println!("{}", generate_key());
@@ -133,6 +144,15 @@ fn forward(args: &[String]) -> ExitCode {
     }
 }
 
+const NPM_MISSING: &str = "npm is not installed; install Node.js to build the frontend";
+
+fn build() -> Result<(), String> {
+    if Path::new("package.json").exists() {
+        status(Command::new("npm").args(["run", "build"]), NPM_MISSING)?;
+    }
+    status(Command::new("cargo").args(["build", "--release"]), "cargo not found")
+}
+
 /// Restart `cargo run -- serve` whenever src/, migrations/ or Cargo.toml change.
 /// `cargo run` execs the app on Unix, so killing the child stops the app too.
 fn dev() -> Result<(), String> {
@@ -141,6 +161,14 @@ fn dev() -> Result<(), String> {
     for p in ["src", "migrations", "Cargo.toml"].map(Path::new).iter().filter(|p| p.exists()) {
         watcher.watch(p, RecursiveMode::Recursive).map_err(|e| format!("watch {}: {e}", p.display()))?;
     }
+
+    // Vite runs once for the whole session; it hot-reloads the frontend itself.
+    // Ctrl-C reaches it too: it shares the terminal's process group.
+    let _vite = if Path::new("package.json").exists() {
+        Some(Command::new("npm").args(["run", "dev"]).spawn().map_err(|e| format!("npm: {e}"))?)
+    } else {
+        None
+    };
 
     loop {
         let mut app = Command::new("cargo").args(["run", "--", "serve"]).spawn().map_err(|e| format!("cargo: {e}"))?;
