@@ -31,7 +31,7 @@ pub fn nullable<T>(value: Option<T>, rule: impl FnOnce(T) -> Result<(), Message>
     value.map_or(Ok(()), rule)
 }
 
-// ---- presence and length ----
+// Presence and length.
 
 /// Not empty after trimming whitespace.
 pub fn required(s: &str) -> Result<(), Message> {
@@ -63,7 +63,7 @@ pub fn max_items<T>(items: &[T], max: usize) -> Result<(), Message> {
     check(items.len() <= max, || format!("Must have at most {max} items.").into())
 }
 
-// ---- numbers ----
+// Numbers.
 
 /// Within `min..=max`.
 pub fn between<N: PartialOrd + fmt::Display>(n: &N, min: N, max: N) -> Result<(), Message> {
@@ -90,7 +90,7 @@ pub fn numeric(s: &str) -> Result<(), Message> {
     check(s.trim().parse::<f64>().is_ok_and(f64::is_finite), || "Must be a number.".into())
 }
 
-// ---- choices and comparisons ----
+// Choices and comparisons.
 
 /// One of `allowed`.
 pub fn one_of<T: PartialEq + ?Sized>(value: &T, allowed: &[&T]) -> Result<(), Message> {
@@ -117,7 +117,7 @@ pub fn accepted(value: bool) -> Result<(), Message> {
     check(value, || "Must be accepted.".into())
 }
 
-// ---- character classes ----
+// Character classes.
 
 /// Letters only (any script).
 pub fn alpha(s: &str) -> Result<(), Message> {
@@ -153,7 +153,7 @@ pub fn ends_with(s: &str, suffix: &str) -> Result<(), Message> {
     check(s.ends_with(suffix), || format!("Must end with {suffix}.").into())
 }
 
-// ---- formats ----
+// Formats.
 
 /// Shaped like an email address: one `@`, a non-empty local part, a dotted
 /// domain, no whitespace.

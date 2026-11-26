@@ -296,8 +296,6 @@ fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &'static str) -
     }
 }
 
-// ---- layer ----
-
 /// Make `Auth<U>`, `Authed<U>`, `require` and `guest` work. Add after the
 /// session layer.
 pub fn layer<P: Provider>(provider: P) -> AuthLayer<P> {
@@ -410,8 +408,6 @@ where
     }
 }
 
-// ---- inputs ----
-
 /// The logged-in user. A handler taking one never runs for an anonymous
 /// request, even on a route without `require`.
 pub struct Authed<U>(pub U);
@@ -492,8 +488,6 @@ impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for Auth<U
         route::from_parts(req, state)
     }
 }
-
-// ---- guards ----
 
 /// Only logged-in users pass. Others get the login redirect or a `401`.
 pub fn require<U>() -> Guard<U> {
