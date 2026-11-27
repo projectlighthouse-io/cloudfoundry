@@ -1,0 +1,36 @@
+[package]
+name = "teams"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Organizations and teams, with typed roles and permissions"
+
+[dependencies]
+base64 = "0.22"
+getrandom = "0.3"
+route = { path = "../route" }
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+tower = "0.5"
+tracing = "0.1"
+
+auth = { path = "../auth", optional = true }
+session = { path = "../session", features = ["route"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
+
+[features]
+# SQL stores. Publish the tables with `art publish teams [--driver sqlite|mysql]`.
+postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+# `teams::auth_user`: take the user id from the `auth` crate's logged-in user.
+auth = ["dep:auth"]
+# `CurrentTeam`: the team a user last switched to, kept in the session.
+session = ["dep:session"]
+
+[dev-dependencies]
+http-body-util = "0.1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true
