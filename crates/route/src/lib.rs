@@ -84,8 +84,11 @@ impl Name for &'static str {
     }
 }
 
-/// A free async function: `fn(I) -> O` or `fn(Cx<S>, I) -> O`, where `I`
-/// implements [`FromRequest`] and `O` implements [`IntoResponse`].
+/// A free async function `fn(A, B, ..., I) -> O` with up to six arguments:
+/// the last implements [`FromRequest`] and may read the body, the others
+/// implement [`FromRequestParts`] and read only the head (`Cx<S>`, `Path`,
+/// `Session`, ...). `O` implements [`IntoResponse`]. A tuple of inputs is
+/// one input, so `fn((A, I))` works too.
 pub trait Handler<S, M>: Clone + Send + Sync + 'static {
     fn call(&self, req: Request<Body>, state: Arc<S>) -> impl Future<Output = Response<Body>> + Send;
 }
@@ -108,23 +111,45 @@ where
     }
 }
 
-impl<S, F, Fut, I, O> Handler<S, (Cx<S>, I)> for F
-where
-    S: Send + Sync + 'static,
-    F: Fn(Cx<S>, I) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = O> + Send,
-    I: FromRequest<S>,
-    O: IntoResponse,
-{
-    fn call(&self, req: Request<Body>, state: Arc<S>) -> impl Future<Output = Response<Body>> + Send {
-        async move {
-            match I::from_request(req, &state).await {
-                Ok(input) => self(Cx(state), input).await.into_response(),
-                Err(rejection) => rejection,
+/// Several arguments: every one but the last reads only the request head
+/// ([`FromRequestParts`]: `Cx<S>`, `Path`, `Session`, ...); the last may read
+/// the body. `async fn update(cx: Cx<App>, m: Membership<Role>, input: Valid<Json<T>>)`.
+macro_rules! handler {
+    ($($p:ident),+ ; $last:ident) => {
+        #[allow(non_snake_case)]
+        impl<S, F, Fut, $($p,)+ $last, O> Handler<S, ($($p,)+ $last,)> for F
+        where
+            S: Send + Sync + 'static,
+            F: Fn($($p,)+ $last) -> Fut + Clone + Send + Sync + 'static,
+            Fut: Future<Output = O> + Send,
+            $($p: FromRequestParts<S>,)+
+            $last: FromRequest<S>,
+            O: IntoResponse,
+        {
+            fn call(&self, req: Request<Body>, state: Arc<S>) -> impl Future<Output = Response<Body>> + Send {
+                async move {
+                    let (mut parts, body) = req.into_parts();
+                    $(
+                        let $p = match $p::from_request_parts(&mut parts, &state).await {
+                            Ok(v) => v,
+                            Err(rejection) => return rejection,
+                        };
+                    )+
+                    match $last::from_request(Request::from_parts(parts, body), &state).await {
+                        Ok($last) => self($($p,)+ $last).await.into_response(),
+                        Err(rejection) => rejection,
+                    }
+                }
             }
         }
-    }
+    };
 }
+
+handler!(A; B);
+handler!(A, B; C);
+handler!(A, B, C; D);
+handler!(A, B, C, D; E);
+handler!(A, B, C, D, E; G);
 
 type MakeService<S> = Arc<dyn Fn(Arc<S>, Arc<Urls>) -> BoxService + Send + Sync>;
 

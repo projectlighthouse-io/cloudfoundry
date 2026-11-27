@@ -23,8 +23,8 @@ assert_eq!(routes.url("hello", &[("name", "ada")])?, "/hello/ada");
 route::serve(tokio::net::TcpListener::bind("127.0.0.1:3000").await?, routes).await?;
 ```
 
-Handlers are free async functions with one input (`FromRequest`, or a tuple of up to
-four) and one output (`IntoResponse`). Groups share a path prefix, a name prefix and
+Handlers are free async functions with up to six inputs (head-only `FromRequestParts`
+ones first, at most one body-reading `FromRequest` last) and one output (`IntoResponse`). Groups share a path prefix, a name prefix and
 tower layers, composed once at build time. See `examples/hello.rs`.
 
 Outputs: `Json(value)` (`application/json`), `Html(markup)` (`text/html`), `String` / `&str`

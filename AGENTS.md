@@ -34,7 +34,7 @@ Smoke-test `art new` and `art publish` output by scaffolding outside the workspa
 
 ## Architecture notes
 
-- `route`: `Router<S>` collects routes, groups and layers; `build(state)` composes each route's tower layers once (first added = outermost) and freezes into `Routes`. Handlers are `fn(I)` or `fn(Cx<S>, I)` with one `FromRequest` input; head-only inputs implement `FromRequestParts`, which lets them sit in tuple inputs.
+- `route`: `Router<S>` collects routes, groups and layers; `build(state)` composes each route's tower layers once (first added = outermost) and freezes into `Routes`. Handlers take up to six arguments: head-only inputs (`FromRequestParts`: `Cx<S>`, `Path`, `Session`, ...) first, at most one body-reading `FromRequest` input last. A tuple of inputs is also one input.
 - Layers find types from other crates in request extensions: the session layer inserts `Session`; csrf reads a `TokenStore`; `auth::layer` inserts the provider; route inserts `Matched` and `UrlFor`. Order: session, csrf, auth, inertia.
 - `validate`: `Valid<T>` only via `Valid::check`; rules are `Rule<T>` values, attached by `#[derive(Validate)]` (crate `validate-derive`, default feature `derive`); with feature `route`, `Errors` is a `422` response.
 - `teams`: roles are app enums, each permission an app type with a `Grants` impl; `Can<P, R>` / `OrgCan<P, O>` read `{team}` / `{org}` (404 for non-members, 403 without `P`). `teams::layer` goes after `auth::layer`; rules live in `Teams`, stores only keep data.

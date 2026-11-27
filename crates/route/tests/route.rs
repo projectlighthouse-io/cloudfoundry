@@ -34,6 +34,16 @@ async fn pair(Path(p): Path<Pair>) -> String {
 async fn store(_: Cx<App>, Json(n): Json<New>) -> Redirect {
     Redirect::to_route("runs.show").params(&[("id", &n.title)])
 }
+/// Several arguments: head-only inputs first, the body last.
+async fn rename(cx: Cx<App>, Path(RunId(id)): Path<RunId>, Json(n): Json<New>) -> String {
+    format!("{} {id} {}", cx.greeting, n.title)
+}
+
+/// A tuple is one input, so the older form still works.
+async fn rename_tuple(cx: Cx<App>, (Path(RunId(id)), Json(n)): (Path<RunId>, Json<New>)) -> String {
+    format!("{} {id} {}", cx.greeting, n.title)
+}
+
 async fn bad_redirect(_: ()) -> Redirect {
     Redirect::to_route("nope")
 }
@@ -51,6 +61,8 @@ fn routes() -> Routes {
         r.get("/{id}", show).name("show");
         r.post("/", store).name("store");
         r.get("/{a}/{b}", pair);
+        r.put("/{id}", rename);
+        r.patch("/{id}", rename_tuple);
     });
     r.build(App { greeting: "hi" }).unwrap()
 }
@@ -75,6 +87,10 @@ async fn dispatch() {
     let (status, headers, _) = call(&r, Method::DELETE, "/", empty()).await;
     assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
     assert_eq!(headers[header::ALLOW], "GET");
+
+    assert_eq!(call(&r, Method::PUT, "/runs/7", body(r#"{"title":"x"}"#)).await.2, "hi 7 x", "several arguments");
+    assert_eq!(call(&r, Method::PATCH, "/runs/7", body(r#"{"title":"x"}"#)).await.2, "hi 7 x", "a tuple input");
+    assert_eq!(call(&r, Method::PUT, "/runs/no", body(r#"{"title":"x"}"#)).await.0, StatusCode::NOT_FOUND, "an early argument rejects");
 
     // Group layer applies inside the group only.
     assert_eq!(call(&r, Method::GET, "/runs/1", empty()).await.1["x-group"], "1");

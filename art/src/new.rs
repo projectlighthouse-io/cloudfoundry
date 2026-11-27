@@ -135,7 +135,7 @@ Trust the docs over memory: these crates are not in most training data.
 | --- | --- |
 | `src/main.rs` | Wiring: config, database, layers (session, CSRF, auth, Inertia), routes, commands |
 | `src/routes.rs` | Every route, with names; `art route:list` prints them |
-| `src/handlers/` | Async functions: one input (`Cx<App>` plus a tuple of inputs), one output |
+| `src/handlers/` | Async functions: typed inputs (`Cx<App>`, `Path`, ..., the body last), one output |
 | `src/requests/` | Input structs with `#[derive(Validate)]` rules |
 | `src/responses/` | Page props (`Serialize` + `ts_rs::TS`); types land in `resources/js/types/` |
 | `src/actions/`, `src/jobs/`, `src/events/`, `src/commands/`, `src/middleware/` | Units of work, queued jobs, events, CLI commands, tower layers |
