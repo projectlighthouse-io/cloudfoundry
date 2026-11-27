@@ -146,7 +146,7 @@ impl OAuth2 {
             token_url: String::new(),
             client_auth: ClientAuth::Post,
             pkce: true,
-            http: reqwest::Client::builder().user_agent("socialite").build().expect("default TLS backend"),
+            http: reqwest::Client::builder().user_agent("socialite").build().unwrap_or_default(),
         }
     }
 }
@@ -174,7 +174,8 @@ pub trait Provider: Send + Sync {
     fn authorize_url(&self, session: &Session) -> String {
         let (state, verifier) = (random(), random());
         let o = self.oauth();
-        session.insert(&key("state", self.name()), &state).expect("a string serializes");
+        // Strings always serialize, so these inserts cannot fail.
+        let _ = session.insert(&key("state", self.name()), &state);
         let mut params = vec![
             ("client_id", o.client_id.clone()),
             ("response_type", "code".to_owned()),
@@ -182,13 +183,14 @@ pub trait Provider: Send + Sync {
             ("scope", o.scopes.join(" ")),
         ];
         if o.pkce {
-            session.insert(&key("pkce", self.name()), &verifier).expect("a string serializes");
+            let _ = session.insert(&key("pkce", self.name()), &verifier);
             params.push(("code_challenge", URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))));
             params.push(("code_challenge_method", "S256".to_owned()));
         }
         params.extend(self.extra_params());
         params.push(("state", state));
-        format!("{}?{}", o.authorize_url, serde_urlencoded::to_string(params).expect("strings urlencode"))
+        // Pairs of strings always encode.
+        format!("{}?{}", o.authorize_url, serde_urlencoded::to_string(params).unwrap_or_default())
     }
 
     /// Finish the login: check `state`, trade the code (with the PKCE
@@ -254,6 +256,8 @@ fn key(kind: &str, provider: &str) -> String {
 
 fn random() -> String {
     let mut b = [0u8; 32];
+    // No secure fallback exists: a guessable state or PKCE verifier must not be issued.
+    #[allow(clippy::expect_used, reason = "the OS random source failed; there is no safe fallback")]
     getrandom::fill(&mut b).expect("OS random source");
     URL_SAFE_NO_PAD.encode(b)
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 use std::time::Duration;
 
 use http_body_util::BodyExt;

@@ -130,7 +130,7 @@ where
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.split(';').next().is_some_and(|m| m.trim().eq_ignore_ascii_case("application/x-www-form-urlencoded")));
         // 419 is Laravel's "page expired"; Inertia clients know it.
-        let expired = || Ok(status(StatusCode::from_u16(419).expect("valid status")));
+        let expired = || Ok(status(StatusCode::from_u16(419).unwrap_or(StatusCode::FORBIDDEN)));
         if unsafe_method && !header_ok && !form {
             return Box::pin(async move { expired() });
         }
@@ -180,6 +180,7 @@ impl<S, T> Csrf<S, T> {
     }
 
     #[cfg(not(feature = "route"))]
+    #[allow(clippy::unused_self, reason = "same signature as the `route` version")]
     fn exempt<B>(&self, _: &Request<B>) -> bool {
         false
     }
@@ -244,6 +245,8 @@ fn status<B: Default>(s: StatusCode) -> Response<B> {
 
 fn random_token() -> String {
     let mut b = [0u8; 32];
+    // No secure fallback exists: a guessable CSRF token must not be issued.
+    #[allow(clippy::expect_used, reason = "the OS random source failed; there is no safe fallback")]
     getrandom::fill(&mut b).expect("OS random source");
     URL_SAFE_NO_PAD.encode(b)
 }

@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 use auth::{Auth, Authed, Provider};
 use http_body_util::BodyExt;
 use route::{

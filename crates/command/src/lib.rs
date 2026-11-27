@@ -106,15 +106,16 @@ impl<S> Commands<S> {
             .subcommands(self.entries.iter().map(|e| e.cmd.clone()));
         let matches = root.try_get_matches_from(args).map_err(Failure::Usage)?;
 
-        let (name, sub) = match matches.subcommand() {
-            Some((name, sub)) => (name.to_owned(), sub.clone()),
-            None => {
-                let name = self.default.expect("clap requires a subcommand when there is no default");
-                let cmd = &self.entries.iter().find(|e| e.name == name).unwrap().cmd;
-                (name.to_owned(), cmd.clone().try_get_matches_from([name]).map_err(Failure::Usage)?)
-            }
+        // clap requires a subcommand when there is no default, and only matches registered names.
+        let name = match matches.subcommand() {
+            Some((name, _)) => name.to_owned(),
+            None => self.default.ok_or_else(|| Failure::Command("no command given".into()))?.to_owned(),
         };
-        let entry = self.entries.into_iter().find(|e| e.name == name).expect("clap only matches registered names");
+        let entry = self.entries.into_iter().find(|e| e.name == name).ok_or_else(|| Failure::Command(format!("unknown command `{name}`")))?;
+        let sub = match matches.subcommand() {
+            Some((_, sub)) => sub.clone(),
+            None => entry.cmd.clone().try_get_matches_from([&name]).map_err(Failure::Usage)?,
+        };
         (entry.run)(state, sub).await.map_err(Failure::Command)
     }
 }

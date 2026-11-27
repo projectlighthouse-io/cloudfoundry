@@ -60,7 +60,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
     let agents = AGENTS.replace("{driver}", driver).replace("{flag}", &flag);
     let url = database_url(driver, name);
     let env_example = format!("APP_NAME={name}\nAPP_KEY=\nDATABASE_URL={url}\n");
-    let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL={url}\n", crate::generate_key());
+    let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL={url}\n", crate::generate_key()?);
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
@@ -97,7 +97,9 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
     ];
     for (file, contents) in files {
         let file = dir.join(file);
-        fs::create_dir_all(file.parent().unwrap()).map_err(|e| e.to_string())?;
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
         let contents = for_driver(&contents.replace("{name}", name), driver);
         fs::write(&file, contents).map_err(|e| format!("{}: {e}", file.display()))?;
     }

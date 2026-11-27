@@ -83,7 +83,7 @@ impl<P: Serialize> IntoResponse for Page<P> {
     fn into_response(self) -> Response<Body> {
         match serde_json::to_vec(&self.props) {
             Ok(props) => {
-                let mut res = StatusCode::from_u16(PENDING).expect("valid status").into_response();
+                let mut res = StatusCode::from_u16(PENDING).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR).into_response();
                 res.extensions_mut().insert(Rendered {
                     component: self.component,
                     props: props.into(),
@@ -344,7 +344,9 @@ impl<T: Serialize> Serialize for Scroll<T> {
 /// unreadable through the back button.
 #[cfg(feature = "session")]
 pub fn clear_history(session: &session::Session) {
-    session.flash(CLEAR_HISTORY_KEY, &true).expect("a bool serializes");
+    if let Err(e) = session.flash(CLEAR_HISTORY_KEY, &true) {
+        tracing::error!("flashing clear-history failed: {e}");
+    }
 }
 
 #[cfg(feature = "session")]

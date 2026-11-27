@@ -66,6 +66,8 @@ impl Keys {
     /// A fresh random key, base64, for `APP_KEY`.
     pub fn generate() -> String {
         let mut k = [0u8; 32];
+        // No secure fallback exists: generating a key without OS randomness must not continue.
+        #[allow(clippy::expect_used, reason = "the OS random source failed; there is no safe fallback")]
         getrandom::fill(&mut k).expect("OS random source");
         STANDARD.encode(k)
     }
@@ -108,6 +110,7 @@ struct Derived {
 }
 
 /// Separate subkeys for encryption and signing, so one key never serves both.
+#[allow(clippy::expect_used, reason = "HMAC accepts keys of any length, so this cannot fail")]
 fn derive(key: &Key, label: &[u8]) -> [u8; 32] {
     let mut m = <HmacSha256 as Mac>::new_from_slice(&key.0).expect("any key length");
     m.update(label);
@@ -183,6 +186,7 @@ impl Codec {
 }
 
 /// The name is bound into the tag, so a value cannot be replayed under another name.
+#[allow(clippy::expect_used, reason = "HMAC accepts keys of any length, so this cannot fail")]
 fn mac(key: &[u8; 32], name: &str, payload: &[u8]) -> HmacSha256 {
     let mut m = <HmacSha256 as Mac>::new_from_slice(key).expect("any key length");
     m.update(&(name.len() as u32).to_be_bytes());

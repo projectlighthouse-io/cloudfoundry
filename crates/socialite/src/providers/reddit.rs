@@ -41,7 +41,9 @@ impl Reddit {
 
     /// e.g. `"web:myapp:v1.0 (by /u/me)"`.
     pub fn user_agent(mut self, ua: &str) -> Self {
-        self.oauth.http = reqwest::Client::builder().user_agent(ua).build().expect("default TLS backend");
+        if let Ok(client) = reqwest::Client::builder().user_agent(ua).build() {
+            self.oauth.http = client;
+        }
         self
     }
 

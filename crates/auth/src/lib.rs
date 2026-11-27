@@ -77,7 +77,12 @@ impl<P: Provider> Erased<P::User> for P {
     }
 
     fn id(&self, user: &P::User) -> Value {
-        serde_json::to_value(Provider::id(self, user)).expect("user id serializes to JSON")
+        // An id that does not serialize (a broken custom Serialize impl) logs the
+        // user out on the next request instead of panicking.
+        serde_json::to_value(Provider::id(self, user)).unwrap_or_else(|e| {
+            tracing::error!("the user id does not serialize to JSON: {e}");
+            Value::Null
+        })
     }
 }
 
@@ -135,7 +140,8 @@ pub fn hash_token(token: &str) -> String {
 }
 
 fn unix_now() -> i64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock after 1970").as_secs() as i64
+    // A clock set before 1970 reads as 0 rather than panicking.
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
 /// Providers that can check a password, for [`Auth::attempt`].
@@ -374,7 +380,15 @@ struct Config {
     secure: bool,
 }
 
+impl<U> AuthCx<U> {
+    /// Cookie work for after the handler, even if a panic elsewhere poisoned the lock.
+    fn pending(&self) -> std::sync::MutexGuard<'_, Pending> {
+        self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
 impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
+
     /// Bearer token first (APIs), then the session, then the remember cookie.
     async fn user(&self, session: Option<&Session>) -> Result<Option<U>, Error> {
         self.user
@@ -403,23 +417,20 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
                 }
             }
         }
-        match found {
-            Some((id, user)) => {
-                session.regenerate();
-                session.insert(SESSION_KEY, &id)?;
-                Ok(Some(user))
-            }
-            None => {
-                // Stale or forged: drop the cookie.
-                *self.pending.lock().unwrap() = Pending::Forget { id: None };
-                Ok(None)
-            }
+        if let Some((id, user)) = found {
+            session.regenerate();
+            session.insert(SESSION_KEY, &id)?;
+            Ok(Some(user))
+        } else {
+            // Stale or forged: drop the cookie.
+            *self.pending() = Pending::Forget { id: None };
+            Ok(None)
         }
     }
 
     async fn finish<B>(&self, res: &mut Response<B>) {
         let Some(r) = &self.remember else { return };
-        let pending = std::mem::take(&mut *self.pending.lock().unwrap());
+        let pending = std::mem::take(&mut *self.pending());
         match pending {
             Pending::None => {}
             Pending::Remember { id, token } => {
@@ -472,17 +483,19 @@ fn ct_eq(a: &str, b: &str) -> bool {
 
 fn random_token() -> String {
     let mut b = [0u8; 32];
+    // No secure fallback exists: a guessable token must not be issued.
+    #[allow(clippy::expect_used, reason = "the OS random source failed; there is no safe fallback")]
     getrandom::fill(&mut b).expect("OS random source");
     URL_SAFE_NO_PAD.encode(b)
 }
 
+#[allow(clippy::result_large_err, reason = "the error is the response itself, returned once per request")]
 fn context<U: Send + Sync + 'static>(ext: &Extensions) -> Result<(AuthCx<U>, Option<Session>), Response<Body>> {
-    match ext.get::<AuthCx<U>>() {
-        Some(cx) => Ok((cx.clone(), ext.get::<Session>().cloned())),
-        None => {
-            tracing::error!("no auth context; add `auth::layer` (after `session::layer`) to the router");
-            Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
-        }
+    if let Some(cx) = ext.get::<AuthCx<U>>() {
+        Ok((cx.clone(), ext.get::<Session>().cloned()))
+    } else {
+        tracing::error!("no auth context; add `auth::layer` (after `session::layer`) to the router");
+        Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
     }
 }
 
@@ -690,7 +703,9 @@ impl<U> Auth<U> {
     /// Log `user` in. Regenerates the session id.
     pub fn login(&self, user: &U) {
         self.session.regenerate();
-        self.session.insert(SESSION_KEY, &self.cx.provider.id(user)).expect("JSON value serializes");
+        if let Err(e) = self.session.insert(SESSION_KEY, &self.cx.provider.id(user)) {
+            tracing::error!("storing the logged-in user failed: {e}");
+        }
     }
 
     /// `login`, plus a remember cookie (needs `.remember(codec)` on the layer).
@@ -699,7 +714,7 @@ impl<U> Auth<U> {
         if self.cx.remember.is_none() {
             return tracing::warn!("login_remember without `.remember(codec)` on the auth layer; no cookie set");
         }
-        *self.cx.pending.lock().unwrap() = Pending::Remember { id: self.cx.provider.id(user), token: random_token() };
+        *self.cx.pending() = Pending::Remember { id: self.cx.provider.id(user), token: random_token() };
     }
 
     /// Log out. Invalidates the whole session and, with remember enabled,
@@ -708,7 +723,7 @@ impl<U> Auth<U> {
         self.session.invalidate();
         if self.cx.remember.is_some() {
             let id = self.user.as_ref().map(|u| self.cx.provider.id(u));
-            *self.cx.pending.lock().unwrap() = Pending::Forget { id };
+            *self.cx.pending() = Pending::Forget { id };
         }
     }
 }
@@ -734,9 +749,10 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         let user = users.by_login(login).await.map_err(AttemptError::Other)?;
         let hash = user.as_ref().and_then(|u| users.password_hash(u));
         let pw = password.to_owned();
-        let matched = blocking(move || match hash {
-            Some(hash) => password::verify(&pw, &hash).is_ok().then_some(hash),
-            None => {
+        let matched = blocking(move || {
+            if let Some(hash) = hash {
+                password::verify(&pw, &hash).is_ok().then_some(hash)
+            } else {
                 password::verify_none(&pw);
                 None
             }
@@ -793,7 +809,7 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         let new_hash = hash_password(new).await.map_err(ChangeError::Other)?;
         users.set_password_hash(users.id(&user), new_hash).await.map_err(ChangeError::Other)?;
         if self.cx.remember.is_some() {
-            *self.cx.pending.lock().unwrap() = Pending::Forget { id: Some(self.cx.provider.id(&user)) };
+            *self.cx.pending() = Pending::Forget { id: Some(self.cx.provider.id(&user)) };
         }
         self.login(&user);
         Ok(())

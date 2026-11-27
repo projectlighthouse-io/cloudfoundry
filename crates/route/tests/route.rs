@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 use http::{HeaderValue, Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
 use route::{Body, BuildError, Cx, Json, Path, Redirect, Router, Routes, UrlError, body, empty};

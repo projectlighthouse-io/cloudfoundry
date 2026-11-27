@@ -25,12 +25,18 @@ pub trait Store: Send + Sync + 'static {
 pub struct MemoryStore(Mutex<HashMap<SessionId, Record>>);
 
 impl MemoryStore {
+    /// The map, even if a panicking caller poisoned the lock: each critical
+    /// section is one plain map update, so the data is still consistent.
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<SessionId, Record>> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn len(&self) -> usize {
-        self.0.lock().unwrap().len()
+        self.lock().len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -40,16 +46,16 @@ impl MemoryStore {
 
 impl Store for MemoryStore {
     async fn load(&self, id: &SessionId) -> Result<Option<Record>, Error> {
-        Ok(self.0.lock().unwrap().get(id).cloned())
+        Ok(self.lock().get(id).cloned())
     }
 
     async fn save(&self, record: &Record) -> Result<(), Error> {
-        self.0.lock().unwrap().insert(record.id.clone(), record.clone());
+        self.lock().insert(record.id.clone(), record.clone());
         Ok(())
     }
 
     async fn delete(&self, id: &SessionId) -> Result<(), Error> {
-        self.0.lock().unwrap().remove(id);
+        self.lock().remove(id);
         Ok(())
     }
 }

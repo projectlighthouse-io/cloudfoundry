@@ -96,12 +96,18 @@ struct Memory {
 }
 
 impl MemoryStore {
+    /// The map, even if a panicking caller poisoned the lock: each critical
+    /// section is a few plain map updates, so the data is still consistent.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Memory> {
+        self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn len(&self) -> usize {
-        self.0.lock().unwrap().map.len()
+        self.lock().map.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -111,7 +117,7 @@ impl MemoryStore {
 
 impl Store for MemoryStore {
     async fn get(&self, key: &str, now: i64) -> Result<Option<Vec<u8>>, Error> {
-        Ok(self.0.lock().unwrap().map.get(key).filter(|(_, exp)| *exp > now).map(|(s, _)| s.clone()))
+        Ok(self.lock().map.get(key).filter(|(_, exp)| *exp > now).map(|(s, _)| s.clone()))
     }
 
     async fn update<F, R>(&self, key: &str, now: i64, f: F) -> Result<R, Error>
@@ -119,7 +125,7 @@ impl Store for MemoryStore {
         F: FnOnce(Option<&[u8]>) -> (R, Option<(Vec<u8>, i64)>) + Send,
         R: Send,
     {
-        let mut m = self.0.lock().unwrap();
+        let mut m = self.lock();
         let current = m.map.get(key).filter(|(_, exp)| *exp > now).map(|(s, _)| s.as_slice());
         let (out, new) = f(current);
         if let Some(entry) = new {
@@ -134,12 +140,12 @@ impl Store for MemoryStore {
     }
 
     async fn clear(&self, key: &str) -> Result<(), Error> {
-        self.0.lock().unwrap().map.remove(key);
+        self.lock().map.remove(key);
         Ok(())
     }
 
     async fn prune(&self, now: i64) -> Result<u64, Error> {
-        let mut m = self.0.lock().unwrap();
+        let mut m = self.lock();
         let before = m.map.len();
         m.map.retain(|_, (_, exp)| *exp > now);
         Ok((before - m.map.len()) as u64)
@@ -213,7 +219,8 @@ impl<A: Algorithm, St: Store> Limiter<A, St> {
 
 /// Now, in the unix milliseconds stores and algorithms use.
 pub fn unix_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).expect("clock after 1970").as_millis() as i64
+    // A clock set before 1970 reads as 0 rather than panicking.
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as i64)
 }
 
 #[cfg(test)]

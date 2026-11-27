@@ -185,8 +185,9 @@ impl<S: Send + Sync + 'static> Router<S> {
         M: 'static,
     {
         let make: MakeService<S> = Arc::new(move |state, urls| handler_service(handler.clone(), state, urls));
+        let i = self.routes.len();
         self.routes.push(Route { method, path: path.to_owned(), name: None, body_limit: None, make });
-        self.routes.last_mut().unwrap()
+        &mut self.routes[i]
     }
 
     pub fn get<H: Handler<S, M>, M: 'static>(&mut self, path: &str, h: H) -> &mut Route<S> {
@@ -289,16 +290,15 @@ impl<S: Send + Sync + 'static> Router<S> {
                 svc = (l.apply)(svc);
             }
 
-            let ep = match by_path.get(&f.path) {
-                Some(&ep) => ep,
-                None => {
-                    matcher
-                        .insert(f.path.clone(), endpoints.len())
-                        .map_err(|e| BuildError::Conflict { path: f.path.clone(), reason: e.to_string() })?;
-                    by_path.insert(f.path.clone(), endpoints.len());
-                    endpoints.push(vec![]);
-                    endpoints.len() - 1
-                }
+            let ep = if let Some(&ep) = by_path.get(&f.path) {
+                ep
+            } else {
+                matcher
+                    .insert(f.path.clone(), endpoints.len())
+                    .map_err(|e| BuildError::Conflict { path: f.path.clone(), reason: e.to_string() })?;
+                by_path.insert(f.path.clone(), endpoints.len());
+                endpoints.push(vec![]);
+                endpoints.len() - 1
             };
             if endpoints[ep].iter().any(|(m, ..)| *m == f.method) {
                 return Err(BuildError::DuplicateRoute(f.method, f.path));
@@ -382,14 +382,11 @@ where
             // Resolved here, inside the layers, so layers see a real Location.
             if let Some(PendingRoute(name, params)) = res.extensions_mut().remove::<PendingRoute>() {
                 let params: Vec<(&str, &str)> = params.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-                match urls.url(name, &params).ok().and_then(|u| HeaderValue::try_from(u).ok()) {
-                    Some(loc) => {
-                        res.headers_mut().insert(header::LOCATION, loc);
-                    }
-                    None => {
-                        tracing::error!("redirect to route `{name}` failed: unknown name or wrong parameters");
-                        res = StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                    }
+                if let Some(loc) = urls.url(name, &params).ok().and_then(|u| HeaderValue::try_from(u).ok()) {
+                    res.headers_mut().insert(header::LOCATION, loc);
+                } else {
+                    tracing::error!("redirect to route `{name}` failed: unknown name or wrong parameters");
+                    res = StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 }
             }
             Ok::<_, Infallible>(res)
@@ -526,6 +523,8 @@ impl Future for ResponseFuture {
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match &mut self.get_mut().0 {
             Kind::Service(f) => Pin::new(f).poll(cx),
+            // Polling a finished future is a caller bug; panicking is the usual answer.
+            #[allow(clippy::expect_used, reason = "polled after completion")]
             Kind::Ready(res) => Poll::Ready(Ok(res.take().expect("ResponseFuture polled after completion"))),
         }
     }

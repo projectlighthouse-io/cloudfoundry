@@ -6,3 +6,6 @@ rust-version = "1.85"
 description = "The Action trait: one unit of application logic, run from anywhere"
 
 [dependencies]
+
+[lints]
+workspace = true

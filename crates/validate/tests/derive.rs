@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 #![cfg(feature = "derive")]
 
 //! `#[derive(Validate)]`: every attribute, renamed keys, `Option` fields, your

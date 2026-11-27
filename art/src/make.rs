@@ -91,11 +91,13 @@ pub fn run(kind: Kind, name: &str) -> Result<(), String> {
     fs::OpenOptions::new()
         .append(true)
         .open(&mod_rs)
-        .and_then(|mut f| write!(f, "{sep}pub mod {snake};\n"))
+        .and_then(|mut f| writeln!(f, "{sep}pub mod {snake};"))
         .map_err(|e| format!("{}: {e}", mod_rs.display()))?;
 
     if let Some(v) = &vue {
-        fs::create_dir_all(v.parent().unwrap()).map_err(|e| e.to_string())?;
+        if let Some(dir) = v.parent() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
         fs::write(v, fill(PAGE_VUE)).map_err(|e| format!("{}: {e}", v.display()))?;
         println!("Created {}", v.display());
         let ts = Path::new("resources/js/types").join(format!("{pascal}.ts"));

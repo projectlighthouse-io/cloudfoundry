@@ -69,9 +69,11 @@ pub fn needs_rehash(hash: &str) -> bool {
 /// Spend the same time as `verify` when there is no user to check against,
 /// so response time does not reveal which accounts exist.
 pub fn verify_none(password: &str) {
-    static DUMMY: OnceLock<String> = OnceLock::new();
-    let dummy = DUMMY.get_or_init(|| hash("dummy password").expect("hashing a constant"));
-    let _ = verify(password, dummy);
+    static DUMMY: OnceLock<Option<String>> = OnceLock::new();
+    // Hashing a constant only fails without OS randomness; then skip the padding rather than panic.
+    if let Some(dummy) = DUMMY.get_or_init(|| hash("dummy password").ok()) {
+        let _ = verify(password, dummy);
+    }
 }
 
 #[cfg(test)]

@@ -11,7 +11,11 @@ fn encode<const N: usize>(v: [i64; N]) -> Vec<u8> {
 /// `None` for missing state, or state another algorithm wrote (wrong length).
 fn decode<const N: usize>(state: Option<&[u8]>) -> Option<[i64; N]> {
     let s = state.filter(|s| s.len() == N * 8)?;
-    Some(std::array::from_fn(|i| i64::from_le_bytes(s[i * 8..i * 8 + 8].try_into().unwrap())))
+    Some(std::array::from_fn(|i| {
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&s[i * 8..i * 8 + 8]); // the length was checked above
+        i64::from_le_bytes(b)
+    }))
 }
 
 fn ms(d: Duration) -> i64 {

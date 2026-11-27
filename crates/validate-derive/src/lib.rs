@@ -66,7 +66,7 @@ fn expand(input: &DeriveInput) -> syn::Result<Tokens> {
 
     let mut fields = Vec::new();
     for f in &named.named {
-        let ident = f.ident.as_ref().expect("named field");
+        let Some(ident) = f.ident.as_ref() else { continue };
         let mut key = rename(&ident.to_string(), rename_all.as_deref());
         let mut rules = Vec::new();
         for attr in &f.attrs {

@@ -171,7 +171,7 @@ impl<S: Send + Sync, T: DeserializeOwned + Send> FromRequestParts<S> for Path<T>
             return Ok(Path(v));
         }
         match serde_urlencoded::from_str::<Vec<(String, T)>>(&encoded) {
-            Ok(mut v) if v.len() == 1 => Ok(Path(v.pop().unwrap().1)),
+            Ok(v) if v.len() == 1 => v.into_iter().next().map(|(_, t)| Path(t)).ok_or_else(not_found),
             _ => Err(not_found()),
         }
     }

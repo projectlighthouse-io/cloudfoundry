@@ -3,3 +3,45 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "art"]
+
+# Shared lints: every crate opts in with `[lints] workspace = true`.
+[workspace.lints.clippy]
+# Handler impls spell out `-> impl Future + Send` on purpose: it pins the Send bound
+# that async fn would leave to inference (rustc HRTB Send issue).
+manual_async_fn = "allow"
+# Prevent common mistakes. Tests may still unwrap, expect and panic (clippy.toml).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+dbg_macro = "warn"
+# Code quality
+needless_return = "warn"
+redundant_clone = "warn"
+redundant_closure = "warn"
+useless_vec = "warn"
+manual_map = "warn"
+manual_filter = "warn"
+map_flatten = "warn"
+single_match = "warn"
+single_match_else = "warn"
+match_bool = "warn"
+needless_bool = "warn"
+if_same_then_else = "warn"
+collapsible_if = "warn"
+collapsible_else_if = "warn"
+# Dead code / unused
+unused_async = "warn"
+unused_self = "warn"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+dead_code = "warn"
+
+# Release builds of this repo's own binaries (`art`): smallest size. Apps that
+# use the crates set their own profile; a web server wants speed (opt-level 3).
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

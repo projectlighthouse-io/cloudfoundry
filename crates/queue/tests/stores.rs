@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 //! The same checks against every SQL store. SQLite runs always (in memory);
 //! Postgres and MySQL run when QUEUE_PG_URL / QUEUE_MYSQL_URL are set.
 

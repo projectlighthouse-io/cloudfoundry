@@ -13,6 +13,7 @@ use hyper_util::{
 };
 use serde::Deserialize;
 
+#[derive(Clone)]
 pub(crate) struct Ssr {
     render: Uri,
     client: Client<HttpConnector, Full<Bytes>>,
@@ -27,9 +28,16 @@ struct Rendered {
 
 impl Ssr {
     /// `base` is the SSR server, e.g. `http://127.0.0.1:13714`.
-    pub(crate) fn new(base: &str) -> Self {
-        let render = format!("{}/render", base.trim_end_matches('/')).parse().unwrap_or_else(|e| panic!("inertia ssr url {base}: {e}"));
-        Ssr { render, client: Client::builder(TokioExecutor::new()).build_http(), timeout: Duration::from_secs(2) }
+    /// `None` (with an error logged) when `base` is not a URL: pages then
+    /// render on the client, as they do whenever SSR fails.
+    pub(crate) fn new(base: &str) -> Option<Self> {
+        match format!("{}/render", base.trim_end_matches('/')).parse() {
+            Ok(render) => Some(Ssr { render, client: Client::builder(TokioExecutor::new()).build_http(), timeout: Duration::from_secs(2) }),
+            Err(e) => {
+                tracing::error!("inertia ssr url {base}: {e}; rendering on the client");
+                None
+            }
+        }
     }
 
     /// `(head, body)` HTML, or `None` to render on the client.

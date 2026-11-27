@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 #![cfg(any(feature = "gitlab", feature = "reddit", feature = "twitter", feature = "oidc", feature = "auth0"))]
 
 //! Each provider against a fake of its API: the authorize URL it builds, how it

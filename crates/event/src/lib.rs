@@ -32,6 +32,11 @@ use std::{
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 type BoxFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
+
+/// Listeners are stored by event type, so this only happens on a bug here.
+fn wrong_type() -> Error {
+    "events: a listener received an event of another type".into()
+}
 type Inline<C> = Arc<dyn Fn(C, &(dyn Any + Send + Sync)) -> BoxFuture<Result<(), Error>> + Send + Sync>;
 
 enum Kind<C> {
@@ -84,7 +89,7 @@ impl<C: Clone + Send + Sync + 'static> Events<C> {
                 Kind::Inline(f) => f(cx.clone(), &event).await?,
                 #[cfg(feature = "queue")]
                 Kind::Queued(q) => {
-                    let push = self.push.as_ref().expect("checked at build");
+                    let Some(push) = self.push.as_ref() else { return Err("events: a queued listener needs `.queue(&queue)` on the builder".into()) };
                     push((q.new_job)(&event)?).await?;
                 }
             }
@@ -114,8 +119,8 @@ impl<C: Clone + Send + Sync + 'static> EventsBuilder<C> {
         F: Fn(C, E) -> Fut + Send + Sync + 'static,
         Fut: Future<Output = Result<(), Error>> + Send + 'static,
     {
-        let inline: Inline<C> = Arc::new(move |cx, event| {
-            let event = event.downcast_ref::<E>().expect("listeners are keyed by event type").clone();
+        let inline: Inline<C> = Arc::new(move |cx, event| -> BoxFuture<Result<(), Error>> {
+            let Some(event) = event.downcast_ref::<E>().cloned() else { return Box::pin(std::future::ready(Err(wrong_type()))) };
             Box::pin(f(cx, event))
         });
         self.add::<E>(Listener { name: short(type_name::<F>()).to_owned(), kind: Kind::Inline(inline) })
@@ -132,8 +137,8 @@ impl<C: Clone + Send + Sync + 'static> EventsBuilder<C> {
         A::Output: Outcome,
     {
         let action = Arc::new(action);
-        let inline: Inline<C> = Arc::new(move |_, event| {
-            let event = event.downcast_ref::<E>().expect("listeners are keyed by event type").clone();
+        let inline: Inline<C> = Arc::new(move |_, event| -> BoxFuture<Result<(), Error>> {
+            let Some(event) = event.downcast_ref::<E>().cloned() else { return Box::pin(std::future::ready(Err(wrong_type()))) };
             let action = action.clone();
             Box::pin(async move { action.run(A::Input::from(event)).await.into_result() })
         });
@@ -190,11 +195,12 @@ mod queued {
     use super::*;
 
     pub(super) type Push = Arc<dyn Fn(NewJob) -> BoxFuture<Result<JobId, Error>> + Send + Sync>;
+    type NewJobFn = Box<dyn Fn(&(dyn Any + Send + Sync)) -> Result<NewJob, Error> + Send + Sync>;
     type Run<C> = Arc<dyn Fn(Arc<C>, String) -> BoxFuture<Result<(), Error>> + Send + Sync>;
 
     pub(super) struct Queued<C> {
         pub(super) job_name: String,
-        pub(super) new_job: Box<dyn Fn(&(dyn Any + Send + Sync)) -> Result<NewJob, Error> + Send + Sync>,
+        pub(super) new_job: NewJobFn,
         pub(super) run: Run<C>,
     }
 
@@ -220,7 +226,7 @@ mod queued {
             let job_name = format!("event:{name}");
             let jn = job_name.clone();
             let new_job = Box::new(move |event: &(dyn Any + Send + Sync)| -> Result<NewJob, Error> {
-                let event = event.downcast_ref::<E>().expect("listeners are keyed by event type");
+                let event = event.downcast_ref::<E>().ok_or_else(wrong_type)?;
                 Ok(NewJob { queue: "default".into(), name: jn.clone(), payload: serde_json::to_string(event)?, max_attempts: 3, delay: Duration::ZERO })
             });
             let f = Arc::new(f);

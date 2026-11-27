@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 //! The same checks against every store. Memory and SQLite always run;
 //! Postgres and MySQL run when THROTTLE_PG_URL / THROTTLE_MYSQL_URL are set.
 

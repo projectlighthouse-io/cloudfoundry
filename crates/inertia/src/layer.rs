@@ -57,12 +57,14 @@ const DEFAULT_ROOT: &str = r#"<!doctype html>
 
 impl InertiaLayer {
     /// The HTML shell for first visits, read now. `{{ head }}` becomes the
-    /// `head` output, `{{ inertia }}` the page. Panics if the file cannot be
-    /// read: that is a startup bug.
+    /// `head` output, `{{ inertia }}` the page. If the file cannot be read or
+    /// has no `{{ inertia }}`, an error is logged and the built-in shell is used.
     pub fn root_template(mut self, path: &str) -> Self {
-        let html = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("inertia root template {path}: {e}"));
-        assert!(html.contains("{{ inertia }}"), "inertia root template {path} has no `{{{{ inertia }}}}`");
-        self.cfg.root = html.into();
+        match std::fs::read_to_string(path) {
+            Ok(html) if html.contains("{{ inertia }}") => self.cfg.root = html.into(),
+            Ok(_) => tracing::error!("inertia root template {path} has no `{{{{ inertia }}}}`; using the built-in one"),
+            Err(e) => tracing::error!("inertia root template {path}: {e}; using the built-in one"),
+        }
         self
     }
 
@@ -79,7 +81,7 @@ impl InertiaLayer {
     /// down, slow or failing.
     #[cfg(feature = "ssr")]
     pub fn ssr(mut self, url: &str) -> Self {
-        self.cfg.ssr = Some(Arc::new(crate::ssr::Ssr::new(url)));
+        self.cfg.ssr = crate::ssr::Ssr::new(url).map(Arc::new);
         self
     }
 
@@ -87,7 +89,7 @@ impl InertiaLayer {
     #[cfg(feature = "ssr")]
     pub fn ssr_timeout(mut self, timeout: std::time::Duration) -> Self {
         if let Some(s) = self.cfg.ssr.take() {
-            let mut s = Arc::try_unwrap(s).unwrap_or_else(|_| panic!("set ssr_timeout before cloning the layer"));
+            let mut s = Arc::unwrap_or_clone(s);
             s.timeout = timeout;
             self.cfg.ssr = Some(Arc::new(s));
         }

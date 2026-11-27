@@ -121,10 +121,7 @@ fn main() -> ExitCode {
         Cli::MakeCommand { name } => make::run(make::Kind::Command, &name),
         Cli::MakeEvent { name, listener } => make::run(make::Kind::Event { listener }, &name),
         Cli::Publish { package, driver, with_ui, list, force } => publish::run(&package, driver.as_deref(), with_ui, list, force),
-        Cli::KeyGenerate => {
-            println!("{}", generate_key());
-            Ok(())
-        }
+        Cli::KeyGenerate => generate_key().map(|k| println!("{k}")),
         Cli::App(args) => return forward(&args),
     };
     match result {
@@ -137,11 +134,11 @@ fn main() -> ExitCode {
 }
 
 /// 32 random bytes, base64: the format `securecookie::Keys::parse` reads.
-fn generate_key() -> String {
+fn generate_key() -> Result<String, String> {
     use base64::Engine;
     let mut k = [0u8; 32];
-    getrandom::fill(&mut k).expect("OS random source");
-    base64::engine::general_purpose::STANDARD.encode(k)
+    getrandom::fill(&mut k).map_err(|e| format!("the OS random source failed: {e}"))?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(k))
 }
 
 const SQLX_INSTALL: &str =

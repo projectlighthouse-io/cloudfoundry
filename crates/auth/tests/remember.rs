@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -119,10 +120,10 @@ async fn remember_me_survives_the_session_and_dies_on_logout() {
     assert!(users.remember.lock().unwrap().contains_key(&1), "token stored");
 
     // A new browser session with only the remember cookie: logged back in, new session issued.
-    let (status, body, set) = send(&r, Method::GET, "/me", &[remember.clone()], None).await;
+    let (status, body, set) = send(&r, Method::GET, "/me", std::slice::from_ref(&remember), None).await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ada"));
     let session = named(&set, "session").expect("session re-established").clone();
-    assert_eq!(send(&r, Method::GET, "/me", &[session.clone()], None).await.1, "ada");
+    assert_eq!(send(&r, Method::GET, "/me", std::slice::from_ref(&session), None).await.1, "ada");
 
     // Logout clears the stored token and the cookie.
     let (_, _, set) = send(&r, Method::POST, "/logout", &[session, remember.clone()], None).await;

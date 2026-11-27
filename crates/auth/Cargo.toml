@@ -138,3 +138,6 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
 
 Then run `art migrate`. Reset links are logged until you send them by mail
 (`send_reset_link` in src/handlers/password_reset.rs); set APP_URL for the link."""
+
+[lints]
+workspace = true

@@ -52,6 +52,8 @@ pub struct SessionId(String);
 impl SessionId {
     fn random() -> Self {
         let mut b = [0u8; 32];
+        // No secure fallback exists: a guessable session id must not be issued.
+        #[allow(clippy::expect_used, reason = "the OS random source failed; there is no safe fallback")]
         getrandom::fill(&mut b).expect("OS random source");
         SessionId(URL_SAFE_NO_PAD.encode(b))
     }
@@ -183,8 +185,11 @@ impl Session {
         } else if s.dirty || refresh {
             let id = s.id.get_or_insert_with(SessionId::random).clone();
             let stored = Stored { data: std::mem::take(&mut s.data), flash: std::mem::take(&mut s.flash_new) };
-            let data = serde_json::to_vec(&stored).expect("session data is JSON");
-            plan.save = Some(Record { id, data, expires_at: now + lifetime });
+            // Session values are already JSON, so this cannot fail; if it ever did, keep the old record.
+            match serde_json::to_vec(&stored) {
+                Ok(data) => plan.save = Some(Record { id, data, expires_at: now + lifetime }),
+                Err(e) => tracing::error!("encoding the session failed: {e}"),
+            }
         }
         plan
     }
@@ -234,7 +239,9 @@ impl csrf::TokenStore for Session {
     }
 
     fn set_token(&mut self, token: String) {
-        self.insert(TOKEN_KEY, &token).expect("a string serializes");
+        if let Err(e) = self.insert(TOKEN_KEY, &token) {
+            tracing::error!("storing the CSRF token failed: {e}");
+        }
     }
 }
 

@@ -27,3 +27,6 @@ http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt", "test-util"] }
 tokio-stream = "0.1"
+
+[lints]
+workspace = true

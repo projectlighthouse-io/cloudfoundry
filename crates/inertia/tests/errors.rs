@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 #![cfg(feature = "validate")]
 
 use http_body_util::BodyExt;

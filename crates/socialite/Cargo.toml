@@ -113,3 +113,6 @@ Needs `auth --with-ui` published first. Enable the route feature and your provid
 The migrations add `social_accounts` and make `users.password_hash` nullable:
 social-only accounts have no password until they set one with "forgot password".
 Then run `art migrate`."""
+
+[lints]
+workspace = true

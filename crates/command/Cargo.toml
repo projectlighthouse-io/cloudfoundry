@@ -13,3 +13,6 @@ action = { path = "../action", optional = true }
 [features]
 # `command::action(a)` runs an `Action` whose `Input: clap::Args`.
 action = ["dep:action"]
+
+[lints]
+workspace = true

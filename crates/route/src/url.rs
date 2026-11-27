@@ -16,7 +16,9 @@ impl Urls {
 
         // ponytail: ignores matchit's `{{`/`}}` escapes; add if a route needs a literal brace.
         while let Some(open) = rest.find('{') {
-            let close = open + rest[open..].find('}').expect("matchit validated the template");
+            // matchit validated the template, so every `{` has its `}`.
+            let Some(len) = rest[open..].find('}') else { break };
+            let close = open + len;
             out.push_str(&rest[..open]);
             let raw = &rest[open + 1..close];
             let (key, catch_all) = raw.strip_prefix('*').map_or((raw, false), |k| (k, true));

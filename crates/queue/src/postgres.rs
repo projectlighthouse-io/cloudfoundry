@@ -67,19 +67,16 @@ impl Store for PostgresStore {
     }
 
     async fn fail(&self, id: JobId, error: &str, retry_in: Option<Duration>) -> Result<(), Error> {
-        match retry_in {
-            Some(delay) => {
-                let sql = format!("update jobs set reserved_until = null, available_at = {NOW} + $2, last_error = $3 where id = $1");
-                sqlx::query(&sql).bind(id.0).bind(delay.as_secs() as i64).bind(error).execute(&self.0).await?;
-            }
-            None => {
-                let sql = format!(
-                    "with moved as (delete from jobs where id = $1 returning *)
-                     insert into failed_jobs (id, queue, name, payload, attempts, max_attempts, error, failed_at)
-                     select id, queue, name, payload, attempts, max_attempts, $2, {NOW} from moved"
-                );
-                sqlx::query(&sql).bind(id.0).bind(error).execute(&self.0).await?;
-            }
+        if let Some(delay) = retry_in {
+            let sql = format!("update jobs set reserved_until = null, available_at = {NOW} + $2, last_error = $3 where id = $1");
+            sqlx::query(&sql).bind(id.0).bind(delay.as_secs() as i64).bind(error).execute(&self.0).await?;
+        } else {
+            let sql = format!(
+                "with moved as (delete from jobs where id = $1 returning *)
+                 insert into failed_jobs (id, queue, name, payload, attempts, max_attempts, error, failed_at)
+                 select id, queue, name, payload, attempts, max_attempts, $2, {NOW} from moved"
+            );
+            sqlx::query(&sql).bind(id.0).bind(error).execute(&self.0).await?;
         }
         Ok(())
     }

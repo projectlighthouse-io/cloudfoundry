@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
+#![cfg_attr(not(feature = "queue"), allow(unused_imports, dead_code, clippy::unused_async))] // queued-listener helpers
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
@@ -40,6 +42,7 @@ async fn inline_in_order_and_stop_at_first_error() {
     assert!(bus.emit(&app, 5u8).await.is_ok(), "an event nobody listens to is fine");
 }
 
+#[cfg(feature = "queue")]
 #[tokio::test]
 async fn queued_listener_runs_as_a_job() {
     let app = App { log: Default::default() };

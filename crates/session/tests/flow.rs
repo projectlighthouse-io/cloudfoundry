@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
 #![cfg(all(feature = "route", feature = "csrf"))]
 
 use std::sync::Arc;
