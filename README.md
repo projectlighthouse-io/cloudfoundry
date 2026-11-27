@@ -23,7 +23,7 @@ art new myapp --git https://github.com/projectlighthouse-io/cloudfoundry
 | [`password`](crates/password) | Argon2id hashing, rehash checks |
 | [`throttle`](crates/throttle) | Rate limits per key: fixed/sliding window, token bucket; middleware, logins, outgoing calls |
 | [`auth`](crates/auth) | Current user, guards, `attempt` with throttling, API tokens with expiry, password reset; publishable handlers |
-| [`socialite`](crates/socialite) | OAuth login (GitHub) |
+| [`socialite`](crates/socialite) | OAuth login: GitHub, GitLab, Google, Reddit, X, Auth0, any OpenID Connect provider (one feature each) |
 | [`inertia`](crates/inertia) | The Inertia.js v3 protocol |
 | [`vite`](crates/vite) | Asset tags from Vite |
 | [`queue`](crates/queue) | Jobs: push, claim, retry, failed jobs |
