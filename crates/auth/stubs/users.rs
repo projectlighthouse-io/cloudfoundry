@@ -7,6 +7,9 @@ use crate::state::Primary;
 #[derive(Clone, sqlx::FromRow)]
 pub struct User {
     pub id: i64,
+    /// Optional: the registration form may leave it out.
+    #[allow(dead_code)] // read once your pages show it
+    pub name: Option<String>,
     pub email: String,
     pub password_hash: String,
     pub remember_token: Option<String>,
@@ -19,8 +22,9 @@ pub struct Users {
 
 impl Users {
     /// Insert a user and read it back. The unique index on `email` rejects duplicates.
-    pub async fn create(&self, email: &str, password_hash: &str) -> Result<User, sqlx::Error> {
-        sqlx::query("insert into users (email, password_hash) values ($1, $2)")
+    pub async fn create(&self, name: Option<&str>, email: &str, password_hash: &str) -> Result<User, sqlx::Error> {
+        sqlx::query("insert into users (name, email, password_hash) values ($1, $2, $3)")
+            .bind(name)
             .bind(email)
             .bind(password_hash)
             .execute(self.db.pool())
@@ -29,7 +33,7 @@ impl Users {
     }
 
     pub async fn by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as("select id, email, password_hash, remember_token from users where email = $1")
+        sqlx::query_as("select id, name, email, password_hash, remember_token from users where email = $1")
             .bind(email)
             .fetch_optional(self.db.pool())
             .await
@@ -41,7 +45,7 @@ impl auth::Provider for Users {
     type Id = i64;
 
     async fn find(&self, id: i64) -> Result<Option<User>, auth::Error> {
-        sqlx::query_as("select id, email, password_hash, remember_token from users where id = $1")
+        sqlx::query_as("select id, name, email, password_hash, remember_token from users where id = $1")
             .bind(id)
             .fetch_optional(self.db.pool())
             .await

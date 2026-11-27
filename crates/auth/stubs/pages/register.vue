@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { Link, useForm } from '@inertiajs/vue3'
 
-const form = useForm({ email: '', password: '', password_confirmation: '' })
+const form = useForm({ name: '', email: '', password: '', password_confirmation: '' })
 </script>
 
 <template>
   <main>
     <h1>Create an account</h1>
     <form @submit.prevent="form.post('/register', { onFinish: () => form.reset('password', 'password_confirmation') })">
+      <label>
+        Name (optional)
+        <input v-model="form.name" type="text" autocomplete="name" />
+      </label>
+      <p v-if="form.errors.name">{{ form.errors.name }}</p>
+
       <label>
         Email
         <input v-model="form.email" type="email" autocomplete="username" required />

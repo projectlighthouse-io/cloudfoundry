@@ -1,5 +1,6 @@
 create table users (
     id integer primary key autoincrement,
+    name text,
     email text not null unique,
     password_hash text not null,
     remember_token text,

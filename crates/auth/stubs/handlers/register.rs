@@ -20,7 +20,7 @@ pub async fn store(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Register>
         return Err(errors.into_response());
     }
     let hash = auth::hash_password(&input.password).await.map_err(|e| server_error(&e))?;
-    let user = users.create(&input.email, &hash).await.map_err(|e| server_error(&e))?;
+    let user = users.create(input.name.as_deref().map(str::trim).filter(|n| !n.is_empty()), &input.email, &hash).await.map_err(|e| server_error(&e))?;
     auth.login(&user);
     Ok(StatusCode::NO_CONTENT)
 }
