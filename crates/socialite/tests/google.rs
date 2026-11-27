@@ -45,7 +45,7 @@ async fn go(cx: Cx<Google>, session: Session) -> String {
     cx.authorize_url(&session)
 }
 
-async fn back(cx: Cx<Google>, (session, route::Query(cb)): (Session, route::Query<Callback>)) -> String {
+async fn back(cx: Cx<Google>, session: Session, route::Query(cb): route::Query<Callback>) -> String {
     match cx.user(&session, cb).await {
         Ok(u) => {
             let s: SocialUser = u.into();

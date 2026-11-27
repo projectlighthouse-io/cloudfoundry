@@ -45,7 +45,7 @@ async fn go(cx: Cx<GitHub>, session: Session) -> String {
     cx.authorize_url(&session)
 }
 
-async fn back(cx: Cx<GitHub>, (session, Query(cb)): (Session, Query<Callback>)) -> String {
+async fn back(cx: Cx<GitHub>, session: Session, Query(cb): Query<Callback>) -> String {
     match cx.user(&session, cb).await {
         Ok(u) => format!("{} {} {} {:?}", u.login, u.token, u.email.unwrap_or_default(), u.email_verified),
         Err(e) => e.to_string(),

@@ -11,7 +11,7 @@ use crate::{social::SocialError, state::App, users::{User, Users}};
 
 /// Logs the user in and sends them to your frontend (APP_URL). On failure the
 /// reason is in the `social_error` query parameter.
-pub async fn callback(cx: Cx<App>, (auth, social): (Auth<User>, SocialCallback)) -> Redirect {
+pub async fn callback(cx: Cx<App>, auth: Auth<User>, social: SocialCallback) -> Redirect {
     let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
     let social = match social.0 {
         Ok(s) => s,

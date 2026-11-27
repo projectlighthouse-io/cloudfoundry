@@ -18,7 +18,7 @@ pub async fn edit(_: ()) -> inertia::Page<PasswordPage> {
 
 /// Check the current password, store the new one. The session gets a new id
 /// and "remember me" cookies stop working; the user stays logged in here.
-pub async fn update(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<ChangePassword>>)) -> Result<inertia::Page<PasswordPage>, Response<Body>> {
+pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ChangePassword>>) -> Result<inertia::Page<PasswordPage>, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     match auth.change_password(&users, &input.current_password, &input.password).await {
         Ok(()) => Ok(inertia::render("settings/password", PasswordPage { status: Some("Your password has been changed.") })),

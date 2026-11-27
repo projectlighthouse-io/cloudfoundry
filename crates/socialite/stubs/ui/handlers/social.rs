@@ -12,7 +12,7 @@ use socialite::SocialCallback;
 
 use crate::{social::SocialError, state::App, users::{User, Users}};
 
-pub async fn callback(cx: Cx<App>, (auth, session, social): (Auth<User>, Session, SocialCallback)) -> Redirect {
+pub async fn callback(cx: Cx<App>, auth: Auth<User>, session: Session, social: SocialCallback) -> Redirect {
     // The login page shows this under its email field (the Inertia error bag).
     let failed = |message: &str| {
         let _ = session.flash("errors", &BTreeMap::from([("email", message)]));

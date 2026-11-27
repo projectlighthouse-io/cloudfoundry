@@ -37,7 +37,7 @@ fn send_reset_link(user: &User, token: &str) {
 }
 
 /// Set the new password, sign out "remember me" devices, and log in: `204`.
-pub async fn update(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<ResetPassword>>)) -> Result<StatusCode, Response<Body>> {
+pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ResetPassword>>) -> Result<StatusCode, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     match auth::reset_password(&users, &input.email, &input.token, &input.password).await {
         Ok(user) => {

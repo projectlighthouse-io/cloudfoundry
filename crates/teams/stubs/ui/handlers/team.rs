@@ -89,7 +89,7 @@ fn back(team: &Team) -> Redirect {
     Redirect::to(format!("/teams/{}", team.id))
 }
 
-pub async fn index(cx: Cx<App>, (user, current): (Authed<User>, CurrentTeam<TeamRole>)) -> Result<inertia::Page<TeamsPage>> {
+pub async fn index(cx: Cx<App>, user: Authed<User>, current: CurrentTeam<TeamRole>) -> Result<inertia::Page<TeamsPage>> {
     let t = access::teams(&cx.db);
     let current = current.as_ref().map(|m| m.team.id);
     let orgs = t.store().orgs_of(user.id).await.map_err(access::failed)?;
@@ -102,12 +102,12 @@ pub async fn index(cx: Cx<App>, (user, current): (Authed<User>, CurrentTeam<Team
     Ok(inertia::render("teams/index", TeamsPage { email: user.email.clone(), teams, organizations }))
 }
 
-pub async fn store(cx: Cx<App>, (user, input): (Authed<User>, Valid<Json<NewTeam>>)) -> Result<Redirect> {
+pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewTeam>>) -> Result<Redirect> {
     let team = access::teams(&cx.db).create_team(user.id, input.organization_id, input.name.trim()).await.map_err(access::failed)?;
     Ok(back(&team))
 }
 
-pub async fn show(cx: Cx<App>, (user, m): (Authed<User>, Membership<TeamRole>)) -> Result<inertia::Page<TeamPage>> {
+pub async fn show(cx: Cx<App>, user: Authed<User>, m: Membership<TeamRole>) -> Result<inertia::Page<TeamPage>> {
     let t = access::teams(&cx.db);
     let users = Users { db: cx.db.clone() };
     let mut members = Vec::new();
@@ -139,7 +139,7 @@ pub async fn show(cx: Cx<App>, (user, m): (Authed<User>, Membership<TeamRole>)) 
     ))
 }
 
-pub async fn update(cx: Cx<App>, (can, input): (Can<RenameTeam, TeamRole>, Valid<Json<TeamName>>)) -> Result<Redirect> {
+pub async fn update(cx: Cx<App>, can: Can<RenameTeam, TeamRole>, input: Valid<Json<TeamName>>) -> Result<Redirect> {
     access::teams(&cx.db).rename_team(&can.team, input.name.trim()).await.map_err(access::failed)?;
     Ok(back(&can.team))
 }
@@ -149,7 +149,7 @@ pub async fn destroy(cx: Cx<App>, can: Can<DeleteTeam, TeamRole>) -> Result<Redi
     Ok(Redirect::to("/teams"))
 }
 
-pub async fn switch((m, mut current): (Membership<TeamRole>, CurrentTeam<TeamRole>)) -> Redirect {
+pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> Redirect {
     current.set(&m);
     back(&m.team)
 }
@@ -171,19 +171,19 @@ async fn guard_owner(cx: &App, can: &Membership<TeamRole>, user: i64, role: Opti
     Ok(())
 }
 
-pub async fn update_member(cx: Cx<App>, (can, Path(path), input): (Can<ManageMembers, TeamRole>, Path<MemberPath>, Valid<Json<RoleChange>>)) -> Result<Redirect> {
+pub async fn update_member(cx: Cx<App>, can: Can<ManageMembers, TeamRole>, Path(path): Path<MemberPath>, input: Valid<Json<RoleChange>>) -> Result<Redirect> {
     guard_owner(&cx, &can, path.user, Some(input.role)).await?;
     access::teams(&cx.db).change_role(&can.team, path.user, input.role).await.map_err(access::failed)?;
     Ok(back(&can.team))
 }
 
-pub async fn remove_member(cx: Cx<App>, (can, Path(path)): (Can<ManageMembers, TeamRole>, Path<MemberPath>)) -> Result<Redirect> {
+pub async fn remove_member(cx: Cx<App>, can: Can<ManageMembers, TeamRole>, Path(path): Path<MemberPath>) -> Result<Redirect> {
     guard_owner(&cx, &can, path.user, None).await?;
     access::teams(&cx.db).remove_member(&can.team, path.user).await.map_err(access::failed)?;
     Ok(back(&can.team))
 }
 
-pub async fn invite(cx: Cx<App>, (can, input): (Can<InviteMembers, TeamRole>, Valid<Json<Invite>>)) -> Result<Redirect> {
+pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, input: Valid<Json<Invite>>) -> Result<Redirect> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Team { team: can.team.id, role: input.role };
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
@@ -191,7 +191,7 @@ pub async fn invite(cx: Cx<App>, (can, input): (Can<InviteMembers, TeamRole>, Va
     Ok(back(&can.team))
 }
 
-pub async fn revoke(cx: Cx<App>, (can, Path(path)): (Can<InviteMembers, TeamRole>, Path<InvitationPath>)) -> Result<Redirect> {
+pub async fn revoke(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, Path(path): Path<InvitationPath>) -> Result<Redirect> {
     access::teams(&cx.db).revoke_team_invitation(&can.team, path.invitation).await.map_err(access::failed)?;
     Ok(back(&can.team))
 }

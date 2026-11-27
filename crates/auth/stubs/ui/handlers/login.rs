@@ -12,7 +12,7 @@ pub async fn show(_: ()) -> inertia::Page<()> {
 
 /// `auth.attempt` throttles, checks the password, upgrades old hashes and logs
 /// in. Add your own checks around it (banned users, audit log, ...).
-pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>)) -> Result<Redirect, Response<Body>> {
+pub async fn login(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<Login>>) -> Result<Redirect, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     let message = match auth.attempt(&users, &input.email, &input.password, input.remember).await {
         Ok(_user) => return Ok(Redirect::to_route("home")),

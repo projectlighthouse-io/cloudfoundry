@@ -12,7 +12,7 @@ pub async fn show(_: ()) -> inertia::Page<()> {
 
 /// Create the account and log it in. Add your own steps here (welcome mail,
 /// default team, ...).
-pub async fn store(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Register>>)) -> Result<Redirect, Response<Body>> {
+pub async fn store(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<Register>>) -> Result<Redirect, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     let server_error = |e: &dyn std::fmt::Display| {
         tracing::error!("register: {e}");

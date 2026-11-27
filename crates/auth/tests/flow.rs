@@ -29,7 +29,7 @@ impl Provider for Users {
     }
 }
 
-async fn login((auth, Path(id)): (Auth<User>, Path<u32>)) -> &'static str {
+async fn login(auth: Auth<User>, Path(id): Path<u32>) -> &'static str {
     auth.login(&User { id, name: "" });
     "in"
 }

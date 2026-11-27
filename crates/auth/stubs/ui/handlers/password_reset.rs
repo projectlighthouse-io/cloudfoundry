@@ -52,12 +52,12 @@ pub struct ResetForm {
     email: String,
 }
 
-pub async fn edit((Path(token), Query(q)): (Path<String>, Query<EmailQuery>)) -> inertia::Page<ResetForm> {
+pub async fn edit(Path(token): Path<String>, Query(q): Query<EmailQuery>) -> inertia::Page<ResetForm> {
     inertia::render("auth/reset-password", ResetForm { token, email: q.email })
 }
 
 /// Set the new password, sign out "remember me" devices, and log in.
-pub async fn update(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<ResetPassword>>)) -> Result<Redirect, Response<Body>> {
+pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ResetPassword>>) -> Result<Redirect, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     match auth::reset_password(&users, &input.email, &input.token, &input.password).await {
         Ok(user) => {

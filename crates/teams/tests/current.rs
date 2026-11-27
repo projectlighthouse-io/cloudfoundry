@@ -20,7 +20,7 @@ async fn current(c: CurrentTeam<TeamRole>) -> String {
     c.as_ref().map_or("none".into(), |m| m.team.name.clone())
 }
 
-async fn switch((m, mut c): (Membership<TeamRole>, CurrentTeam<TeamRole>)) -> Redirect {
+async fn switch(m: Membership<TeamRole>, mut c: CurrentTeam<TeamRole>) -> Redirect {
     c.set(&m);
     Redirect::to("/current")
 }

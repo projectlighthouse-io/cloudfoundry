@@ -15,7 +15,7 @@ pub struct InvitationPage {
 
 /// The link in the invitation: join, then go to the team or organization.
 /// A link that cannot be used shows why.
-pub async fn accept(cx: Cx<App>, (user, Path(token)): (Authed<User>, Path<String>)) -> Result<Redirect, inertia::Page<InvitationPage>> {
+pub async fn accept(cx: Cx<App>, user: Authed<User>, Path(token): Path<String>) -> Result<Redirect, inertia::Page<InvitationPage>> {
     let problem = match access::teams(&cx.db).accept(&token, user.id, &user.email).await {
         Ok(Target::Team { team, .. }) => return Ok(Redirect::to(format!("/teams/{team}"))),
         Ok(Target::Org { org, .. }) => return Ok(Redirect::to(format!("/organizations/{org}"))),

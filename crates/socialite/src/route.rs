@@ -5,7 +5,7 @@
 //! // GET /auth/google           -> redirect to Google (route name `social.google`)
 //! // GET /auth/google/callback  -> your handler      (route name `social.google.callback`)
 //!
-//! async fn callback(cx: Cx<App>, (auth, social): (Auth<User>, SocialCallback)) -> Redirect {
+//! async fn callback(cx: Cx<App>, auth: Auth<User>, social: SocialCallback) -> Redirect {
 //!     match social.0 {
 //!         Ok(user) => { /* find or create, auth.login */ }
 //!         Err(e) => { /* declined, forged state, ... */ }

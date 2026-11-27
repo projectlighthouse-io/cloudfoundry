@@ -89,12 +89,12 @@ pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<inertia::Page<Orgs
     Ok(inertia::render("organizations/index", OrgsPage { email: user.email.clone(), organizations }))
 }
 
-pub async fn store(cx: Cx<App>, (user, input): (Authed<User>, Valid<Json<NewOrganization>>)) -> Result<Redirect> {
+pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewOrganization>>) -> Result<Redirect> {
     let org = access::teams(&cx.db).create_org(user.id, input.name.trim()).await.map_err(access::failed)?;
     Ok(back(&org))
 }
 
-pub async fn show(cx: Cx<App>, (user, m): (Authed<User>, OrgMembership<OrgRole>)) -> Result<inertia::Page<OrgPage>> {
+pub async fn show(cx: Cx<App>, user: Authed<User>, m: OrgMembership<OrgRole>) -> Result<inertia::Page<OrgPage>> {
     let t = access::teams(&cx.db);
     let users = Users { db: cx.db.clone() };
     let mut members = Vec::new();
@@ -123,7 +123,7 @@ pub async fn show(cx: Cx<App>, (user, m): (Authed<User>, OrgMembership<OrgRole>)
     ))
 }
 
-pub async fn update(cx: Cx<App>, (can, input): (OrgCan<RenameOrg, OrgRole>, Valid<Json<NewOrganization>>)) -> Result<Redirect> {
+pub async fn update(cx: Cx<App>, can: OrgCan<RenameOrg, OrgRole>, input: Valid<Json<NewOrganization>>) -> Result<Redirect> {
     access::teams(&cx.db).rename_org(&can.org, input.name.trim()).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }
@@ -149,19 +149,19 @@ async fn guard_owner(cx: &App, can: &OrgMembership<OrgRole>, user: i64, role: Op
     Ok(())
 }
 
-pub async fn update_member(cx: Cx<App>, (can, Path(path), input): (OrgCan<ManageOrgMembers, OrgRole>, Path<MemberPath>, Valid<Json<OrgRoleChange>>)) -> Result<Redirect> {
+pub async fn update_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>, input: Valid<Json<OrgRoleChange>>) -> Result<Redirect> {
     guard_owner(&cx, &can, path.user, Some(input.role)).await?;
     access::teams(&cx.db).change_org_role(&can.org, path.user, input.role).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }
 
-pub async fn remove_member(cx: Cx<App>, (can, Path(path)): (OrgCan<ManageOrgMembers, OrgRole>, Path<MemberPath>)) -> Result<Redirect> {
+pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>) -> Result<Redirect> {
     guard_owner(&cx, &can, path.user, None).await?;
     access::teams(&cx.db).remove_org_member(&can.org, path.user).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }
 
-pub async fn invite(cx: Cx<App>, (can, input): (OrgCan<ManageOrgMembers, OrgRole>, Valid<Json<OrgInvite>>)) -> Result<Redirect> {
+pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, input: Valid<Json<OrgInvite>>) -> Result<Redirect> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Org { org: can.org.id, role: input.role };
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
@@ -169,7 +169,7 @@ pub async fn invite(cx: Cx<App>, (can, input): (OrgCan<ManageOrgMembers, OrgRole
     Ok(back(&can.org))
 }
 
-pub async fn revoke(cx: Cx<App>, (can, Path(path)): (OrgCan<ManageOrgMembers, OrgRole>, Path<InvitationPath>)) -> Result<Redirect> {
+pub async fn revoke(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<InvitationPath>) -> Result<Redirect> {
     access::teams(&cx.db).revoke_org_invitation(&can.org, path.invitation).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }

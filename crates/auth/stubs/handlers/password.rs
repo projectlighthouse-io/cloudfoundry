@@ -8,7 +8,7 @@ use crate::{requests::password::ChangePassword, state::App, users::{User, Users}
 
 /// `204` once changed; `422` when the current password is wrong. The session
 /// gets a new id and "remember me" cookies stop working.
-pub async fn update(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<ChangePassword>>)) -> Result<StatusCode, Response<Body>> {
+pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ChangePassword>>) -> Result<StatusCode, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     match auth.change_password(&users, &input.current_password, &input.password).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),

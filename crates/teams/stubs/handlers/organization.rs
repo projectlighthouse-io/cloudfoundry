@@ -54,7 +54,7 @@ pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<Json<Vec<OrgSummar
 }
 
 /// A new organization, owned by the user.
-pub async fn store(cx: Cx<App>, (user, input): (Authed<User>, Valid<Json<NewOrganization>>)) -> Result<(StatusCode, Json<Org>)> {
+pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewOrganization>>) -> Result<(StatusCode, Json<Org>)> {
     let org = access::teams(&cx.db).create_org(user.id, input.name.trim()).await.map_err(access::failed)?;
     Ok((StatusCode::CREATED, Json(org)))
 }
@@ -68,7 +68,7 @@ pub async fn show(cx: Cx<App>, m: OrgMembership<OrgRole>) -> Result<Json<OrgDeta
     Ok(Json(OrgDetail { summary: OrgSummary { org: m.org, role: m.role }, members, teams: org_teams, invitations }))
 }
 
-pub async fn update(cx: Cx<App>, (can, input): (OrgCan<RenameOrg, OrgRole>, Valid<Json<NewOrganization>>)) -> Result<StatusCode> {
+pub async fn update(cx: Cx<App>, can: OrgCan<RenameOrg, OrgRole>, input: Valid<Json<NewOrganization>>) -> Result<StatusCode> {
     access::teams(&cx.db).rename_org(&can.org, input.name.trim()).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -96,20 +96,20 @@ async fn guard_owner(cx: &App, can: &OrgMembership<OrgRole>, user: i64, role: Op
     Ok(())
 }
 
-pub async fn update_member(cx: Cx<App>, (can, Path(path), input): (OrgCan<ManageOrgMembers, OrgRole>, Path<MemberPath>, Valid<Json<OrgRoleChange>>)) -> Result<StatusCode> {
+pub async fn update_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>, input: Valid<Json<OrgRoleChange>>) -> Result<StatusCode> {
     guard_owner(&cx, &can, path.user, Some(input.role)).await?;
     access::teams(&cx.db).change_org_role(&can.org, path.user, input.role).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Removes them from the organization's teams too.
-pub async fn remove_member(cx: Cx<App>, (can, Path(path)): (OrgCan<ManageOrgMembers, OrgRole>, Path<MemberPath>)) -> Result<StatusCode> {
+pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>) -> Result<StatusCode> {
     guard_owner(&cx, &can, path.user, None).await?;
     access::teams(&cx.db).remove_org_member(&can.org, path.user).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub async fn invite(cx: Cx<App>, (can, input): (OrgCan<ManageOrgMembers, OrgRole>, Valid<Json<OrgInvite>>)) -> Result<impl IntoResponse> {
+pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, input: Valid<Json<OrgInvite>>) -> Result<impl IntoResponse> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Org { org: can.org.id, role: input.role };
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
@@ -117,7 +117,7 @@ pub async fn invite(cx: Cx<App>, (can, input): (OrgCan<ManageOrgMembers, OrgRole
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }
 
-pub async fn revoke(cx: Cx<App>, (can, Path(path)): (OrgCan<ManageOrgMembers, OrgRole>, Path<InvitationPath>)) -> Result<StatusCode> {
+pub async fn revoke(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<InvitationPath>) -> Result<StatusCode> {
     access::teams(&cx.db).revoke_org_invitation(&can.org, path.invitation).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }

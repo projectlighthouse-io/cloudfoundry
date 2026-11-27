@@ -18,7 +18,7 @@ pub enum Joined {
 }
 
 /// Accept an invitation as the logged-in user. Their email must be the invited one.
-pub async fn accept(cx: Cx<App>, (user, Path(token)): (Authed<User>, Path<String>)) -> Result<Json<Joined>, Response<Body>> {
+pub async fn accept(cx: Cx<App>, user: Authed<User>, Path(token): Path<String>) -> Result<Json<Joined>, Response<Body>> {
     let target = access::teams(&cx.db).accept(&token, user.id, &user.email).await.map_err(access::failed)?;
     Ok(Json(match target {
         Target::Team { team, .. } => Joined::Team { id: team },
