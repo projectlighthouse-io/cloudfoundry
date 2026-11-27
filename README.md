@@ -20,8 +20,9 @@ art new myapp --git https://github.com/projectlighthouse-io/cloudfoundry
 | [`securecookie`](crates/securecookie) | Sign and encrypt cookie values |
 | [`session`](crates/session) | Sessions: layer, flash, Postgres / MySQL / SQLite stores |
 | [`csrf`](crates/csrf) | CSRF tokens (Inertia's `X-XSRF-TOKEN`) |
-| [`password`](crates/password) | Argon2id hashing |
-| [`auth`](crates/auth) | Current user, `Authed<U>`, guards, publishable login |
+| [`password`](crates/password) | Argon2id hashing, rehash checks |
+| [`throttle`](crates/throttle) | Rate limits per key: fixed/sliding window, token bucket; middleware, logins, outgoing calls |
+| [`auth`](crates/auth) | Current user, guards, `attempt` with throttling, API tokens with expiry, password reset; publishable handlers |
 | [`socialite`](crates/socialite) | OAuth login (GitHub) |
 | [`inertia`](crates/inertia) | The Inertia.js v3 protocol |
 | [`vite`](crates/vite) | Asset tags from Vite |

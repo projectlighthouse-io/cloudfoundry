@@ -20,7 +20,7 @@ art dev
 | `make:handler`, `make:action`, `make:request`, `make:response` | One file plus one `mod` line |
 | `make:page <path>` | Props struct, Vue page, and its TypeScript type |
 | `make:middleware`, `make:job`, `make:event [--listener]`, `make:command` | Stubs |
-| `publish <package> [--driver sqlite\|mysql]` | Copy a package's stubs into the app (`--list`, `--force`) |
+| `publish <package> [--driver sqlite\|mysql] [--with-ui]` | Copy a package's stubs into the app; `--with-ui` adds its Inertia pages (`--list`, `--force`) |
 | `key:generate` | A fresh `APP_KEY` |
 | `ssr` | Run the Inertia SSR server from `art build`; set `INERTIA_SSR_URL=http://127.0.0.1:13714` |
 | anything else | `cargo run -- …`: `route:list`, `queue:work`, `event:list`, `config:show`, … |
