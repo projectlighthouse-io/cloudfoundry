@@ -4,7 +4,7 @@ Server-sent event responses.
 
 ```toml
 [dependencies]
-sse = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["route"] }
+sse = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["route"] }
 ```
 
 ```rust

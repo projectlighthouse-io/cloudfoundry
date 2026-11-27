@@ -4,7 +4,7 @@ Speak the Inertia.js v3 protocol.
 
 ```toml
 [dependencies]
-inertia = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["validate"] }
+inertia = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["validate"] }
 ```
 
 ```rust

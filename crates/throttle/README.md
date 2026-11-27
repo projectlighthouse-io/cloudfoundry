@@ -4,7 +4,7 @@ Rate limit anything per key: requests, logins, calls to an external API, a funct
 
 ```toml
 [dependencies]
-throttle = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
+throttle = { git = "https://github.com/projectlighthouse-io/toolkit" }
 ```
 
 ```rust

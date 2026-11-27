@@ -6,8 +6,8 @@ experience, Gorilla for structure: no framework crate, no service container, no
 ORM. Each crate stands alone; the wiring is a `main.rs` the app owns.
 
 ```bash
-cargo install --git https://github.com/projectlighthouse-io/cloudfoundry art
-art new myapp --git https://github.com/projectlighthouse-io/cloudfoundry
+cargo install --git https://github.com/projectlighthouse-io/toolkit art
+art new myapp --git https://github.com/projectlighthouse-io/toolkit
 ```
 
 | Crate | Does |
@@ -31,5 +31,5 @@ art new myapp --git https://github.com/projectlighthouse-io/cloudfoundry
 | [`sse`](crates/sse) | Server-sent event responses |
 | [`art`](art) | The CLI |
 
-Crates ship as git dependencies: `route = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }`.
+Crates ship as git dependencies: `route = { git = "https://github.com/projectlighthouse-io/toolkit" }`.
 Rust 1.85+ (`art`: 1.88+). Development: `cargo test --workspace --all-features`.

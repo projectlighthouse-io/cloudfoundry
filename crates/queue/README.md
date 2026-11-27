@@ -4,7 +4,7 @@ Persist, claim, run and retry jobs.
 
 ```toml
 [dependencies]
-queue = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["postgres", "command"] }
+queue = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["postgres", "command"] }
 ```
 
 ```rust

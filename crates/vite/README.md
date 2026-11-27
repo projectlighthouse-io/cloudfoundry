@@ -4,7 +4,7 @@ Asset tags from a Vite manifest or dev server.
 
 ```toml
 [dependencies]
-vite = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
+vite = { git = "https://github.com/projectlighthouse-io/toolkit" }
 ```
 
 ```rust

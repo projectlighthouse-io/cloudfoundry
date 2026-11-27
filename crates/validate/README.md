@@ -5,7 +5,7 @@ rule passed. All rules run; errors are collected per field.
 
 ```toml
 [dependencies]
-validate = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["route"] }
+validate = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["route"] }
 ```
 
 ```rust

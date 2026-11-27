@@ -4,7 +4,7 @@ Issue and verify CSRF tokens.
 
 ```toml
 [dependencies]
-csrf = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["route"] }
+csrf = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["route"] }
 ```
 
 ```rust

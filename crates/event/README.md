@@ -4,7 +4,7 @@ Dispatch typed events to listeners, in process.
 
 ```toml
 [dependencies]
-event = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["queue"] }
+event = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["queue"] }
 ```
 
 ```rust

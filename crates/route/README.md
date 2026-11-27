@@ -4,7 +4,7 @@ Match a request to a handler.
 
 ```toml
 [dependencies]
-route = { git = "https://github.com/projectlighthouse-io/cloudfoundry", features = ["server", "command"] }
+route = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["server", "command"] }
 ```
 
 ```rust

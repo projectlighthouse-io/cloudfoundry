@@ -4,7 +4,7 @@ Know who the current user is, and guard routes.
 
 ```toml
 [dependencies]
-auth = { git = "https://github.com/projectlighthouse-io/cloudfoundry" }
+auth = { git = "https://github.com/projectlighthouse-io/toolkit" }
 ```
 
 ```rust
