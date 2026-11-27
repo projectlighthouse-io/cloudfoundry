@@ -48,8 +48,9 @@ impl Credentials for Users {
         Ok(self.0.lock().unwrap().iter().find(|u| u.email.eq_ignore_ascii_case(login)).cloned())
     }
 
-    fn password_hash(&self, user: &User) -> String {
-        user.hash.clone()
+    /// An empty hash stands for an account made through social login.
+    fn password_hash(&self, user: &User) -> Option<String> {
+        Some(user.hash.clone()).filter(|h| !h.is_empty())
     }
 
     async fn set_password_hash(&self, id: u32, hash: String) -> Result<(), auth::Error> {
@@ -105,6 +106,7 @@ fn users() -> Users {
     Users(Arc::new(Mutex::new(vec![
         User { id: 1, email: "ada@example.com", hash: password::hash("right").unwrap() },
         User { id: 2, email: "bob@example.com", hash: old_hash("bobpw") },
+        User { id: 3, email: "social@example.com", hash: String::new() },
     ])))
 }
 
@@ -168,4 +170,12 @@ async fn hash_password_makes_a_current_hash() {
     let h = auth::hash_password("secret").await.unwrap();
     assert!(password::verify("secret", &h).is_ok());
     assert!(!password::needs_rehash(&h));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn accounts_without_a_password_cannot_log_in_with_one() {
+    let r = app(users());
+    for pw in ["", "anything"] {
+        assert_eq!(send(&r, &mut None, "POST", &format!("/login/social@example.com/{pw}x"), [10, 0, 0, 9]).await, "failed");
+    }
 }

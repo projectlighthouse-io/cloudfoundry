@@ -95,12 +95,15 @@ pub trait Remember: Provider {
 pub trait Tokens: Provider {
     /// The owner of the token whose hash is `hash`, and when the token expires
     /// (unix seconds; `None` for never).
-    fn by_token_hash(&self, hash: &str) -> impl Future<Output = Result<Option<(Self::User, Option<i64>)>, Error>> + Send;
+    fn by_token_hash(&self, hash: &str) -> impl Future<Output = Result<Option<TokenOwner<Self::User>>, Error>> + Send;
     /// Keep a new token for the user with `id`.
     fn store_token(&self, id: Self::Id, token: NewToken) -> impl Future<Output = Result<(), Error>> + Send;
     /// Forget the token whose hash is `hash`.
     fn delete_token(&self, hash: &str) -> impl Future<Output = Result<(), Error>> + Send;
 }
+
+/// A token's owner and when the token expires (unix seconds; `None` for never).
+pub type TokenOwner<U> = (U, Option<i64>);
 
 /// A token to store: its name (e.g. the device), hash and expiry.
 #[derive(Clone, Debug)]
@@ -139,8 +142,10 @@ fn unix_now() -> i64 {
 pub trait Credentials: Provider {
     /// The user who logs in as `login` (usually the email address).
     fn by_login(&self, login: &str) -> impl Future<Output = Result<Option<Self::User>, Error>> + Send;
-    /// The user's stored `password::hash`.
-    fn password_hash(&self, user: &Self::User) -> String;
+    /// The user's stored `password::hash`; `None` for an account without a
+    /// password (made through social login). Such accounts cannot log in with
+    /// a password until one is set, e.g. through a password reset.
+    fn password_hash(&self, user: &Self::User) -> Option<String>;
     /// Store a new hash for the user with `id`.
     fn set_password_hash(&self, id: Self::Id, hash: String) -> impl Future<Output = Result<(), Error>> + Send;
 }
@@ -244,6 +249,8 @@ pub async fn reset_password<P: Resets>(users: &P, login: &str, token: &str, new_
 pub enum ChangeError {
     /// Nobody is logged in.
     NotLoggedIn,
+    /// The account has no password yet (social login); set one with a reset.
+    NoPassword,
     /// The current password is wrong.
     WrongPassword,
     Other(Error),
@@ -253,6 +260,7 @@ impl fmt::Display for ChangeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotLoggedIn => f.write_str("not logged in"),
+            Self::NoPassword => f.write_str("the account has no password"),
             Self::WrongPassword => f.write_str("the current password is incorrect"),
             Self::Other(e) => write!(f, "changing the password failed: {e}"),
         }
@@ -724,7 +732,7 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         }
 
         let user = users.by_login(login).await.map_err(AttemptError::Other)?;
-        let hash = user.as_ref().map(|u| users.password_hash(u));
+        let hash = user.as_ref().and_then(|u| users.password_hash(u));
         let pw = password.to_owned();
         let matched = blocking(move || match hash {
             Some(hash) => password::verify(&pw, &hash).is_ok().then_some(hash),
@@ -776,7 +784,8 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         P: Credentials<User = U>,
     {
         let user = self.user.clone().ok_or(ChangeError::NotLoggedIn)?;
-        let (hash, pw) = (users.password_hash(&user), current.to_owned());
+        let hash = users.password_hash(&user).ok_or(ChangeError::NoPassword)?;
+        let pw = current.to_owned();
         let ok = tokio::task::spawn_blocking(move || password::verify(&pw, &hash).is_ok()).await.map_err(|e| ChangeError::Other(e.into()))?;
         if !ok {
             return Err(ChangeError::WrongPassword);

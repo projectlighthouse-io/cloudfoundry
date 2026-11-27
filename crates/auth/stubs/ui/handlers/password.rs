@@ -27,6 +27,11 @@ pub async fn update(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<ChangePa
             errors.add("current_password", "The current password is incorrect.");
             Err(errors.into_response())
         }
+        Err(ChangeError::NoPassword) => {
+            let mut errors = Errors::new();
+            errors.add("current_password", "This account has no password yet. Use “Forgot password” to set one.");
+            Err(errors.into_response())
+        }
         Err(ChangeError::NotLoggedIn) => Err(StatusCode::UNAUTHORIZED.into_response()),
         Err(ChangeError::Other(e)) => {
             tracing::error!("change password: {e}");

@@ -38,8 +38,8 @@ impl Credentials for Users {
     async fn by_login(&self, login: &str) -> Result<Option<User>, auth::Error> {
         Ok((login == "ada").then(|| self.users.lock().unwrap()[0].clone()))
     }
-    fn password_hash(&self, user: &User) -> String {
-        user.hash.clone()
+    fn password_hash(&self, user: &User) -> Option<String> {
+        Some(user.hash.clone())
     }
     async fn set_password_hash(&self, id: u32, hash: String) -> Result<(), auth::Error> {
         self.users.lock().unwrap().iter_mut().find(|u| u.id == id).unwrap().hash = hash;
@@ -83,6 +83,7 @@ fn app(users: Users) -> Routes {
                 Ok(()) => "changed",
                 Err(ChangeError::WrongPassword) => "wrong",
                 Err(ChangeError::NotLoggedIn) => "anonymous",
+                Err(ChangeError::NoPassword) => "no password",
                 Err(ChangeError::Other(_)) => "error",
             }
         }

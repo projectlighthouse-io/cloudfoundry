@@ -11,7 +11,8 @@ pub struct User {
     #[allow(dead_code)] // read once your pages show it
     pub name: Option<String>,
     pub email: String,
-    pub password_hash: String,
+    /// `None` for accounts made through social login.
+    pub password_hash: Option<String>,
     pub remember_token: Option<String>,
 }
 
@@ -63,7 +64,7 @@ impl auth::Credentials for Users {
         Ok(self.by_email(email).await?)
     }
 
-    fn password_hash(&self, user: &User) -> String {
+    fn password_hash(&self, user: &User) -> Option<String> {
         user.password_hash.clone()
     }
 
