@@ -413,6 +413,11 @@ pub struct RouteInfo {
 #[derive(Clone, Debug)]
 pub struct Matched(pub Arc<RouteInfo>);
 
+/// The peer address of the connection. `serve` puts it in request
+/// extensions. Behind a proxy it is the proxy's address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClientAddr(pub std::net::SocketAddr);
+
 struct Inner {
     matcher: matchit::Router<usize>,
     endpoints: Vec<Vec<(Method, BoxService, usize)>>,

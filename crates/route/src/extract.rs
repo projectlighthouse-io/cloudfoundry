@@ -49,7 +49,7 @@ macro_rules! via_parts {
     )*};
 }
 
-via_parts!([] (), [] Cx<S>, [T: DeserializeOwned + Send] Path<T>, [T: DeserializeOwned + Send] Query<T>);
+via_parts!([] (), [] Cx<S>, [] crate::ClientAddr, [T: DeserializeOwned + Send] Path<T>, [T: DeserializeOwned + Send] Query<T>);
 
 macro_rules! tuple {
     ($($p:ident),* ; $last:ident) => {
@@ -111,6 +111,16 @@ deref!(Path, Query, Form, Json);
 impl<S: Send + Sync> FromRequestParts<S> for () {
     async fn from_request_parts(_: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         Ok(())
+    }
+}
+
+/// `500` when the request did not come through `serve` (no address recorded).
+impl<S: Send + Sync> FromRequestParts<S> for crate::ClientAddr {
+    async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
+        parts.extensions.get::<crate::ClientAddr>().copied().ok_or_else(|| {
+            tracing::error!("no client address; requests need to come through `route::serve`");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        })
     }
 }
 
