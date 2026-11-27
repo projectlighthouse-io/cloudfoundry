@@ -32,5 +32,17 @@ session = ["dep:session"]
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
+[package.metadata.art.publish]
+"stubs/migrations/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
+"stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
+
+[package.metadata.art.publish-sqlite]
+"stubs/migrations/sqlite/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
+"stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/migrations/mysql/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
+"stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
+
 [lints]
 workspace = true
