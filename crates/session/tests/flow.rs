@@ -25,6 +25,12 @@ struct Named {
     name: String,
 }
 
+/// What login does: a new session id, and with it a new CSRF token.
+async fn rotate(s: Session) -> &'static str {
+    s.regenerate();
+    "rotated"
+}
+
 async fn hook(_: ()) -> &'static str {
     "hooked"
 }
@@ -34,6 +40,7 @@ fn app(store: MemoryStore) -> Routes {
     r.get("/", |_: ()| async { "home" });
     r.post("/count", count);
     r.post("/hook", hook).name("hook");
+    r.post("/rotate", rotate);
     r.post("/named", named);
     r.layer(session::layer(StoreRef(Arc::new(store)), Codec::new(Keys::parse(&Keys::generate()).unwrap())))
         .layer(csrf::layer::<Session>().except(["hook"]));
@@ -124,4 +131,17 @@ async fn session_and_csrf_round_trip() {
 
     let mut fresh = Client { routes: c.routes.clone(), jar: vec![] };
     assert_eq!(fresh.send(Method::POST, "/hook", false).await.1, "hooked", "exempt route");
+}
+
+#[tokio::test]
+async fn a_rotated_token_reaches_the_client_on_the_same_response() {
+    let mut c = Client { routes: app(MemoryStore::new()), jar: vec![] };
+    c.send(Method::GET, "/", false).await;
+    let before = c.get("XSRF-TOKEN").unwrap();
+
+    assert_eq!(c.send(Method::POST, "/rotate", true).await.1, "rotated");
+    let after = c.get("XSRF-TOKEN").unwrap();
+    assert_ne!(after, before, "new token sent with the rotating response");
+    // A JSON client posts again straight away, with no page visit in between.
+    assert_eq!(c.send(Method::POST, "/count", true).await, (StatusCode::OK, "1".into()));
 }

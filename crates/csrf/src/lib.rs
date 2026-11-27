@@ -135,7 +135,7 @@ where
             return Box::pin(async move { expired() });
         }
 
-        let needs_cookie = cookie(req.headers(), COOKIE) != Some(token.as_str());
+        let sent = cookie(req.headers(), COOKIE).map(str::to_owned);
         Box::pin(async move {
             let req = if unsafe_method && !header_ok {
                 // A plain HTML form: the token is the `_token` field. Read the body,
@@ -151,7 +151,15 @@ where
                 req
             };
             let mut res = inner.call(req).await?;
-            if needs_cookie {
+            // The handler may have rotated the token (login and logout regenerate
+            // the session). Send the current one, so a client that posts again
+            // without a page visit in between still has it.
+            let token = store.token().unwrap_or_else(|| {
+                let t = random_token();
+                store.set_token(t.clone());
+                t
+            });
+            if sent.as_deref() != Some(token.as_str()) {
                 let secure = if secure { "; Secure" } else { "" };
                 if let Ok(v) = HeaderValue::try_from(format!("{COOKIE}={token}; Path=/; SameSite=Lax{secure}")) {
                     res.headers_mut().append(header::SET_COOKIE, v);
