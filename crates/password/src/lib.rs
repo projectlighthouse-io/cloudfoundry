@@ -4,6 +4,7 @@
 //! let hash = password::hash("hunter2").unwrap();
 //! assert!(password::verify("hunter2", &hash).is_ok());
 //! assert_eq!(password::verify("wrong", &hash), Err(password::Error::Mismatch));
+//! assert!(!password::needs_rehash(&hash));
 //! ```
 //!
 //! Both calls take tens of milliseconds of CPU by design. In an async handler
@@ -12,7 +13,7 @@
 use std::{fmt, sync::OnceLock};
 
 use argon2::{
-    Argon2,
+    Algorithm, Argon2, Params, Version,
     password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
 };
 
@@ -53,6 +54,18 @@ pub fn verify(password: &str, hash: &str) -> Result<(), Error> {
     })
 }
 
+/// Whether `hash` was made with other settings than [`hash`] uses today
+/// (older parameters, another algorithm, or unreadable). Check after a
+/// successful `verify` and store a fresh `hash(password)` when true.
+pub fn needs_rehash(hash: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(hash) else { return true };
+    let Ok(params) = Params::try_from(&parsed) else { return true };
+    let current = Params::default();
+    parsed.algorithm != Algorithm::Argon2id.ident()
+        || parsed.version != Some(Version::V0x13.into())
+        || (params.m_cost(), params.t_cost(), params.p_cost()) != (current.m_cost(), current.t_cost(), current.p_cost())
+}
+
 /// Spend the same time as `verify` when there is no user to check against,
 /// so response time does not reveal which accounts exist.
 pub fn verify_none(password: &str) {
@@ -63,9 +76,21 @@ pub fn verify_none(password: &str) {
 
 #[cfg(test)]
 mod tests {
+    use argon2::PasswordHasher;
     #[test]
     fn rejects_malformed_hash() {
         assert_eq!(super::verify("x", "not a hash"), Err(super::Error::Hash));
         super::verify_none("x");
+    }
+
+    #[test]
+    fn needs_rehash_only_for_other_settings() {
+        assert!(!super::needs_rehash(&super::hash("x").unwrap()));
+        let weak = argon2::Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, argon2::Params::new(8192, 1, 1, None).unwrap());
+        let salt = argon2::password_hash::SaltString::encode_b64(b"0123456789abcdef").unwrap();
+        let old = weak.hash_password(b"x", &salt).unwrap().to_string();
+        assert!(super::needs_rehash(&old), "older parameters");
+        assert!(super::verify("x", &old).is_ok(), "still verifies");
+        assert!(super::needs_rehash("not a hash"));
     }
 }
