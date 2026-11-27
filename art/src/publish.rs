@@ -10,8 +10,13 @@
 //! [package.metadata.art.publish-sqlite]   # `art publish <pkg> --driver sqlite`
 //! "stubs/migrations/sqlite/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 //!
+//! [package.metadata.art.with-ui]         # added with `--with-ui`; same destination replaces
+//! "stubs/ui/handlers/auth.rs" = "src/handlers/auth.rs"
+//! "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+//!
 //! [package.metadata.art]
 //! notes = "Printed after publishing: the lines to add to routes.rs and main.rs."
+//! with-ui-notes = "Printed instead with `--with-ui`."
 //! ```
 
 use std::{
@@ -23,7 +28,7 @@ use std::{
 
 use serde_json::Value;
 
-pub fn run(package: &str, driver: Option<&str>, list: bool, force: bool) -> Result<(), String> {
+pub fn run(package: &str, driver: Option<&str>, with_ui: bool, list: bool, force: bool) -> Result<(), String> {
     let out = Command::new("cargo")
         .args(["metadata", "--format-version", "1"])
         .output()
@@ -47,10 +52,14 @@ pub fn run(package: &str, driver: Option<&str>, list: bool, force: bool) -> Resu
         Some(d) => format!("`{package}` has no stubs for driver `{d}`"),
         None => format!("`{package}` has nothing to publish"),
     })?;
+    let mut entries = pairs(table);
+    if with_ui {
+        let ui = art["with-ui"].as_object().ok_or_else(|| format!("`{package}` has no UI stubs"))?;
+        entries = with_ui_entries(entries, pairs(ui));
+    }
 
     let ts = next_version(&timestamp());
-    for (from, to) in table {
-        let Some(to) = to.as_str() else { continue };
+    for (from, to) in entries {
         let dest = PathBuf::from(to.replace("{timestamp}", &ts));
         if list {
             println!("{from} -> {to}");
@@ -67,10 +76,26 @@ pub fn run(package: &str, driver: Option<&str>, list: bool, force: bool) -> Resu
         println!("publish  {}", dest.display());
     }
 
-    if !list && let Some(notes) = art["notes"].as_str() {
+    let notes = if with_ui { art["with-ui-notes"].as_str().or(art["notes"].as_str()) } else { art["notes"].as_str() };
+    if !list && let Some(notes) = notes {
         println!("\n{notes}");
     }
     Ok(())
+}
+
+fn pairs(table: &serde_json::Map<String, Value>) -> Vec<(&str, &str)> {
+    table.iter().filter_map(|(from, to)| Some((from.as_str(), to.as_str()?))).collect()
+}
+
+/// Add the UI entries; one with the same destination as a base entry replaces its source.
+fn with_ui_entries<'a>(mut entries: Vec<(&'a str, &'a str)>, ui: Vec<(&'a str, &'a str)>) -> Vec<(&'a str, &'a str)> {
+    for (from, to) in ui {
+        match entries.iter_mut().find(|(_, t)| *t == to) {
+            Some(entry) => entry.0 = from,
+            None => entries.push((from, to)),
+        }
+    }
+    entries
 }
 
 /// The existing file for `template`. A `{timestamp}` part matches any
@@ -122,6 +147,20 @@ fn timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn with_ui_replaces_by_destination_and_adds_the_rest() {
+        let base = vec![("stubs/handlers/login.rs", "src/handlers/login.rs"), ("stubs/users.rs", "src/users.rs")];
+        let ui = vec![("stubs/ui/handlers/login.rs", "src/handlers/login.rs"), ("stubs/pages/login.vue", "resources/js/pages/auth/login.vue")];
+        assert_eq!(
+            super::with_ui_entries(base, ui),
+            [
+                ("stubs/ui/handlers/login.rs", "src/handlers/login.rs"),
+                ("stubs/users.rs", "src/users.rs"),
+                ("stubs/pages/login.vue", "resources/js/pages/auth/login.vue"),
+            ]
+        );
+    }
+
     #[test]
     fn timestamp_shape() {
         let t = super::timestamp();

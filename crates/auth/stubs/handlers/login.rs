@@ -1,21 +1,17 @@
-//! Published by `art publish auth`. App code: change it freely.
+//! Published by `art publish auth`: JSON endpoints for your own
+//! frontend, logged in by session cookie. App code: change it freely.
 
 use auth::{AttemptError, Auth};
-use route::{Body, Cx, IntoResponse, Json, Redirect, http::{Response, StatusCode}};
+use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use validate::{Errors, Valid};
 
 use crate::{requests::login::Login, state::App, users::{User, Users}};
 
-pub async fn show(_: ()) -> inertia::Page<()> {
-    inertia::render("auth/login", ())
-}
-
-/// `auth.attempt` throttles, checks the password, upgrades old hashes and logs
-/// in. Add your own checks around it (banned users, audit log, ...).
-pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>)) -> Result<Redirect, Response<Body>> {
+/// `204` when logged in; `422` with `{ "errors": { "email": [...] } }` when not.
+pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>)) -> Result<StatusCode, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     let message = match auth.attempt(&users, &input.email, &input.password, input.remember).await {
-        Ok(_user) => return Ok(Redirect::to_route("home")),
+        Ok(_user) => return Ok(StatusCode::NO_CONTENT),
         Err(AttemptError::Failed) => "These credentials do not match our records.".to_owned(),
         Err(AttemptError::Throttled(wait)) => {
             format!("Too many login attempts. Please try again in {} seconds.", wait.as_secs().max(1))
@@ -30,7 +26,7 @@ pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>))
     Err(errors.into_response())
 }
 
-pub async fn logout(auth: Auth<User>) -> Redirect {
+pub async fn logout(auth: Auth<User>) -> StatusCode {
     auth.logout();
-    Redirect::to_route("home")
+    StatusCode::NO_CONTENT
 }

@@ -82,6 +82,9 @@ enum Cli {
         /// Database the stubs are for: `sqlite` or `mysql`. Default: Postgres.
         #[arg(long)]
         driver: Option<String>,
+        /// Also publish the package's UI: Inertia handlers and Vue pages.
+        #[arg(long)]
+        with_ui: bool,
         /// Show what would be copied.
         #[arg(long)]
         list: bool,
@@ -117,7 +120,7 @@ fn main() -> ExitCode {
         Cli::MakeJob { name } => make::run(make::Kind::Job, &name),
         Cli::MakeCommand { name } => make::run(make::Kind::Command, &name),
         Cli::MakeEvent { name, listener } => make::run(make::Kind::Event { listener }, &name),
-        Cli::Publish { package, driver, list, force } => publish::run(&package, driver.as_deref(), list, force),
+        Cli::Publish { package, driver, with_ui, list, force } => publish::run(&package, driver.as_deref(), with_ui, list, force),
         Cli::KeyGenerate => {
             println!("{}", generate_key());
             Ok(())
