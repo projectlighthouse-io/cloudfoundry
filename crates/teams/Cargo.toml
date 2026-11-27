@@ -77,7 +77,7 @@ agents = """
 - Roles (`TeamRole`, `OrgRole`) and permissions (unit structs with `teams::Grants` impls) live in `src/access.rs`. Add a permission there, then take `Can<MyPermission, TeamRole>` (or `OrgCan<_, OrgRole>`) in the handler: it is `404` for non-members and `403` without the permission.
 - Routes name their team by id: `/teams/{team}/...`, `/organizations/{org}/...`. `Membership<TeamRole>` loads `{team}` for any member; `CurrentTeam<TeamRole>` is the team to land on.
 - Change teams through `access::teams(&cx.db)` (`create_team`, `add_member`, `change_role`, `invite`, `accept`, ...): it enforces the last-owner and org-membership rules. Map its errors with `access::failed`.
-- Docs: https://toolkit.projectlighthouse.io/docs/crates/teams.md"""
+- Docs: https://toolkit.projectlighthouse.io/docs/modules/teams.md"""
 notes = """
 Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session"] }`
 (`<driver>` is sqlite, postgres or mysql), then:

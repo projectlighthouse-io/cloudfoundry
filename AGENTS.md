@@ -27,7 +27,7 @@ cargo test -p db --features sqlite       # db tests need a driver feature
 cargo run -p art -- new demo             # scaffold an app (path deps on this checkout)
 ```
 
-Store conformance tests (`crates/{session,queue,throttle}/tests/stores.rs`) run SQLite always, and
+Store conformance tests (`crates/{session,queue,throttle,teams}/tests/stores.rs`) run SQLite always, and
 Postgres / MySQL when `*_PG_URL` / `*_MYSQL_URL` point at `postgres:16-alpine` / `mysql:8.4`.
 
 Smoke-test `art new` and `art publish` output by scaffolding outside the workspace and building it.
@@ -37,6 +37,7 @@ Smoke-test `art new` and `art publish` output by scaffolding outside the workspa
 - `route`: `Router<S>` collects routes, groups and layers; `build(state)` composes each route's tower layers once (first added = outermost) and freezes into `Routes`. Handlers are `fn(I)` or `fn(Cx<S>, I)` with one `FromRequest` input; head-only inputs implement `FromRequestParts`, which lets them sit in tuple inputs.
 - Layers find types from other crates in request extensions: the session layer inserts `Session`; csrf reads a `TokenStore`; `auth::layer` inserts the provider; route inserts `Matched` and `UrlFor`. Order: session, csrf, auth, inertia.
 - `validate`: `Valid<T>` only via `Valid::check`; rules are `Rule<T>` values, attached by `#[derive(Validate)]` (crate `validate-derive`, default feature `derive`); with feature `route`, `Errors` is a `422` response.
+- `teams`: roles are app enums, each permission an app type with a `Grants` impl; `Can<P, R>` / `OrgCan<P, O>` read `{team}` / `{org}` (404 for non-members, 403 without `P`). `teams::layer` goes after `auth::layer`; rules live in `Teams`, stores only keep data.
 - `art make:*` writes one file and appends one `pub mod` line; `art new` templates go through `.replace("{name}", ..)`.
 - Known rustc HRTB `Send` issue: a generic service projection naming `Request<route::Body>` fails `Send`; make layers generic over the request body.
 
