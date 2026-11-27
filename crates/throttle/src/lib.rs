@@ -31,6 +31,16 @@ use std::{
 
 mod algorithms;
 pub use algorithms::{FixedWindow, SlidingWindow, TokenBucket};
+#[cfg(feature = "command")]
+pub mod command;
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+mod sql;
+#[cfg(feature = "mysql")]
+pub use sql::MysqlStore;
+#[cfg(feature = "postgres")]
+pub use sql::PostgresStore;
+#[cfg(feature = "sqlite")]
+pub use sql::SqliteStore;
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -195,7 +205,8 @@ impl<A: Algorithm, St: Store> Limiter<A, St> {
     }
 }
 
-pub(crate) fn unix_ms() -> i64 {
+/// Now, in the unix milliseconds stores and algorithms use.
+pub fn unix_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).expect("clock after 1970").as_millis() as i64
 }
 

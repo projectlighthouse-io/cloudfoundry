@@ -8,5 +8,32 @@ description = "Rate limit anything per key, with a choice of algorithm"
 [dependencies]
 tokio = { version = "1", features = ["time"] }
 
+clap = { version = "4", features = ["derive"], optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
+
+[features]
+# SQL stores, for limits shared by several servers.
+# Publish the table with `art publish throttle [--driver sqlite|mysql]`.
+postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+# `throttle::command::prune` for `throttle:prune`.
+command = ["dep:clap"]
+
 [dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
+
+[package.metadata.art.publish]
+"stubs/migrations/create_throttle.up.sql" = "migrations/{timestamp}_create_throttle.up.sql"
+"stubs/migrations/create_throttle.down.sql" = "migrations/{timestamp}_create_throttle.down.sql"
+
+[package.metadata.art.publish-sqlite]
+"stubs/migrations/sqlite/create_throttle.up.sql" = "migrations/{timestamp}_create_throttle.up.sql"
+"stubs/migrations/create_throttle.down.sql" = "migrations/{timestamp}_create_throttle.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/migrations/mysql/create_throttle.up.sql" = "migrations/{timestamp}_create_throttle.up.sql"
+"stubs/migrations/create_throttle.down.sql" = "migrations/{timestamp}_create_throttle.down.sql"
+
+[package.metadata.art]
+notes = "Run `art migrate` to create the throttle table. Prune expired keys with `throttle:prune` (feature `command`)."

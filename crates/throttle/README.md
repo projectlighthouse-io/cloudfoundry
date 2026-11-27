@@ -27,4 +27,7 @@ github.wait("github").await?;                    // sleep until allowed, then go
 `hit` counts (denied hits are not counted), `check` peeks without counting,
 `clear` resets a key, `wait` sleeps until a hit is allowed. Implement
 `Algorithm` for your own; implement `Store` to keep counts elsewhere.
-`MemoryStore` is per process.
+`MemoryStore` is per process. To share limits across servers, enable `postgres`, `sqlite`
+or `mysql`, run `art publish throttle [--driver sqlite|mysql]` and `art migrate`, then
+`Limiter::new(throttle::PostgresStore::new(pool), algorithm)`. Feature `command` adds
+`throttle::command::prune` for `throttle:prune`.
