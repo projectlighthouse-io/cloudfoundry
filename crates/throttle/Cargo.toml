@@ -42,4 +42,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] 
 "stubs/migrations/create_throttle.down.sql" = "migrations/{timestamp}_create_throttle.down.sql"
 
 [package.metadata.art]
+agents = """
+- `throttle::layer(name, Limiter::memory(...), throttle::by_ip)` limits a route group; a memory limiter counts per process, so use a SQL store when several servers run.
+- Docs: https://toolkit.projectlighthouse.io/docs/crates/throttle.md"""
 notes = "Run `art migrate` to create the throttle table. Prune expired keys with `throttle:prune` (feature `command`)."

@@ -43,4 +43,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
 "stubs/migrations/mysql/create_jobs.down.sql" = "migrations/{timestamp}_create_jobs.down.sql"
 
 [package.metadata.art]
+agents = """
+- Jobs live in `src/jobs/` (`art make:job <name>`) and are registered in `src/jobs/mod.rs`; run workers with `queue:work`.
+- Docs: https://toolkit.projectlighthouse.io/docs/crates/queue.md"""
 notes = "Run `art migrate` to create the jobs and failed_jobs tables."

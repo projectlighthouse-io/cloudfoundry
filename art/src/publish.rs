@@ -17,6 +17,7 @@
 //! [package.metadata.art]
 //! notes = "Printed after publishing: the lines to add to routes.rs and main.rs."
 //! with-ui-notes = "Printed instead with `--with-ui`."
+//! agents = "Appended once to the app's AGENTS.md, for coding agents."
 //! ```
 
 use std::{
@@ -79,11 +80,32 @@ pub fn run(package: &str, driver: Option<&str>, with_ui: bool, list: bool, force
         println!("publish  {}", dest.display());
     }
 
+    if !list && let Some(agents) = art["agents"].as_str() {
+        append_agent_notes(package, agents)?;
+    }
+
     let notes = if with_ui { art["with-ui-notes"].as_str().or(art["notes"].as_str()) } else { art["notes"].as_str() };
     if !list && let Some(notes) = notes {
         println!("\n{notes}");
     }
     Ok(())
+}
+
+/// Add the package's notes for coding agents to the app's AGENTS.md, once.
+fn append_agent_notes(package: &str, notes: &str) -> Result<(), String> {
+    let path = Path::new("AGENTS.md");
+    let Ok(current) = fs::read_to_string(path) else { return Ok(()) };
+    if let Some(updated) = with_agent_notes(&current, package, notes) {
+        fs::write(path, updated).map_err(|e| format!("AGENTS.md: {e}"))?;
+        println!("update   AGENTS.md ({package} notes)");
+    }
+    Ok(())
+}
+
+/// `current` with a `## <package>` section of notes, or `None` if it has one already.
+fn with_agent_notes(current: &str, package: &str, notes: &str) -> Option<String> {
+    let marker = format!("<!-- art publish {package} -->");
+    (!current.contains(&marker)).then(|| format!("{}\n\n## {package}\n\n{marker}\n{}\n", current.trim_end(), notes.trim()))
 }
 
 fn pairs(table: &serde_json::Map<String, Value>) -> Vec<(&str, &str)> {
@@ -183,6 +205,13 @@ mod tests {
                 ("stubs/pages/login.vue", "resources/js/pages/auth/login.vue"),
             ]
         );
+    }
+
+    #[test]
+    fn agent_notes_are_added_once() {
+        let once = super::with_agent_notes("# app\n", "auth", "- use attempt").unwrap();
+        assert_eq!(once, "# app\n\n## auth\n\n<!-- art publish auth -->\n- use attempt\n");
+        assert_eq!(super::with_agent_notes(&once, "auth", "- use attempt"), None);
     }
 
     #[test]

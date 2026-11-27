@@ -71,6 +71,10 @@ serde = { version = "1", features = ["derive"] }
 "stubs/components/SocialButtons.vue" = "resources/js/components/SocialButtons.vue"
 
 [package.metadata.art]
+agents = """
+- Each provider is a Cargo feature (`google`, `github`, ...) plus `route`; `socialite::routes(&mut r, provider, handlers::social::callback)` adds `/auth/{provider}` and its callback.
+- Account linking lives in `src/social.rs` (`Users::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`.
+- Docs: https://toolkit.projectlighthouse.io/docs/modules/socialite.md"""
 notes = """
 Needs `auth` published first (it extends src/users.rs). Enable the route feature and your providers:
   socialite = { <source>, features = ["route", "google", "github"] }

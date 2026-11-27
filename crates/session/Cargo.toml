@@ -52,4 +52,7 @@ tokio = { version = "1", features = ["macros", "rt"] }
 "stubs/migrations/mysql/create_sessions.down.sql" = "migrations/{timestamp}_create_sessions.down.sql"
 
 [package.metadata.art]
+agents = """
+- `session::layer(store, codec)` must be the first layer in `src/main.rs`; CSRF and auth read the session it adds.
+- Docs: https://toolkit.projectlighthouse.io/docs/crates/session.md"""
 notes = "Run `art migrate` to create the sessions table."
