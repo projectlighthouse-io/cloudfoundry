@@ -189,3 +189,29 @@ async fn body_limits_default_group_and_route() {
     let info = routes.table().find(|i| i.path == "/default").unwrap();
     assert_eq!(info.body_limit, route::DEFAULT_BODY_LIMIT);
 }
+
+#[tokio::test]
+async fn json_and_html_responses() {
+    #[derive(serde::Serialize)]
+    struct Run {
+        id: u64,
+        status: &'static str,
+    }
+    let mut r = Router::new();
+    r.get("/runs/{id}.json", |Path(RunId(id)): Path<RunId>| async move { Json(Run { id, status: "passed" }) });
+    r.get("/runs/{id}", |Path(RunId(id)): Path<RunId>| async move { route::Html(format!("<h1>Run {id}</h1>")) });
+    r.post("/runs", |_: ()| async { (StatusCode::CREATED, Json(Run { id: 7, status: "queued" })) });
+    let r = r.build(()).unwrap();
+
+    let send = |method: Method, uri: &'static str| {
+        let r = r.clone();
+        async move {
+            let res = r.handle(Request::builder().method(method).uri(uri).body(empty()).unwrap()).await;
+            let (status, ct) = (res.status(), res.headers()[header::CONTENT_TYPE].to_str().unwrap().to_owned());
+            (status, ct, String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap())
+        }
+    };
+    assert_eq!(send(Method::GET, "/runs/42.json").await, (StatusCode::OK, "application/json".into(), r#"{"id":42,"status":"passed"}"#.into()));
+    assert_eq!(send(Method::GET, "/runs/42").await, (StatusCode::OK, "text/html; charset=utf-8".into(), "<h1>Run 42</h1>".into()));
+    assert_eq!(send(Method::POST, "/runs").await, (StatusCode::CREATED, "application/json".into(), r#"{"id":7,"status":"queued"}"#.into()));
+}

@@ -27,7 +27,7 @@ mod server;
 pub use action_handler::{ActionHandler, action};
 pub use extract::{BodyLimit, Cx, DEFAULT_BODY_LIMIT, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
-pub use response::{IntoResponse, Redirect};
+pub use response::{Html, IntoResponse, Redirect};
 #[cfg(feature = "multipart")]
 pub use multipart::{Field, Multipart, MultipartError};
 #[cfg(feature = "server")]

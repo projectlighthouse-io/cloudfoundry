@@ -53,6 +53,23 @@ impl IntoResponse for Bytes {
     }
 }
 
+/// An HTML response: `text/html; charset=utf-8`. A plain `String` is sent as
+/// `text/plain`, so browsers would show the markup instead of rendering it.
+///
+/// ```
+/// async fn hello(_: ()) -> route::Html<String> {
+///     route::Html(format!("<h1>Hello, {}</h1>", "Ada"))
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct Html<T>(pub T);
+
+impl<T: Into<Bytes>> IntoResponse for Html<T> {
+    fn into_response(self) -> Response<Body> {
+        with_type(self.0, "text/html; charset=utf-8")
+    }
+}
+
 impl<T: Serialize> IntoResponse for Json<T> {
     fn into_response(self) -> Response<Body> {
         match serde_json::to_vec(&self.0) {
