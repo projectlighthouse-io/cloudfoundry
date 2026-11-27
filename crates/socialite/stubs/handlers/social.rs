@@ -1,0 +1,35 @@
+//! Published by `art publish socialite`. App code: change it freely.
+//!
+//! The callback for every provider registered with `socialite::routes`.
+//! `/auth/{provider}` redirects to the provider; it sends the user back here.
+
+use auth::Auth;
+use route::{Cx, Redirect};
+use socialite::SocialCallback;
+
+use crate::{social::SocialError, state::App, users::{User, Users}};
+
+/// Logs the user in and sends them to your frontend (APP_URL). On failure the
+/// reason is in the `social_error` query parameter.
+pub async fn callback(cx: Cx<App>, (auth, social): (Auth<User>, SocialCallback)) -> Redirect {
+    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+    let social = match social.0 {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("social login: {e}");
+            return Redirect::to(format!("{base}/?social_error=declined"));
+        }
+    };
+    let users = Users { db: cx.db.clone() };
+    match users.find_or_create_social(&social, auth.user()).await {
+        Ok(user) => {
+            auth.login(&user);
+            Redirect::to(base)
+        }
+        Err(SocialError::NoEmail) => Redirect::to(format!("{base}/?social_error=no_email")),
+        Err(SocialError::Db(e)) => {
+            tracing::error!("social login: {e}");
+            Redirect::to(format!("{base}/?social_error=server"))
+        }
+    }
+}
