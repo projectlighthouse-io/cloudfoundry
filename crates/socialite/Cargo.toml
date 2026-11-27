@@ -13,6 +13,18 @@ serde = { version = "1", features = ["derive"] }
 serde_urlencoded = "0.7"
 session = { path = "../session" }
 sha2 = "0.10"
+serde_json = { version = "1", optional = true }
+
+[features]
+# One feature per provider; enable only what the app uses.
+github = []
+gitlab = []
+google = []
+reddit = []
+twitter = []
+# Any OpenID Connect provider (discovery or explicit endpoints).
+oidc = ["dep:serde_json"]
+auth0 = ["oidc"]
 
 [dev-dependencies]
 base64 = "0.22"

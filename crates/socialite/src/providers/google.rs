@@ -83,7 +83,9 @@ impl Google {
 
 impl Provider for Google {
     type User = GoogleUser;
-    const NAME: &'static str = "google";
+    fn name(&self) -> &'static str {
+        "google"
+    }
 
     fn oauth(&self) -> &OAuth2 {
         &self.oauth
@@ -120,7 +122,7 @@ impl Provider for Google {
 impl From<GoogleUser> for SocialUser {
     fn from(u: GoogleUser) -> Self {
         SocialUser {
-            provider: Google::NAME,
+            provider: "google",
             id: u.sub,
             name: u.name,
             email: u.email,

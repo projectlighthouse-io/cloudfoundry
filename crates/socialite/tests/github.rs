@@ -1,3 +1,5 @@
+#![cfg(feature = "github")]
+
 use route::{
     Cx, Json, Query, Router, Routes, empty,
     http::{Request, header},

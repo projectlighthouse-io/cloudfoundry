@@ -45,7 +45,9 @@ impl GitHub {
 
 impl Provider for GitHub {
     type User = GitHubUser;
-    const NAME: &'static str = "github";
+    fn name(&self) -> &'static str {
+        "github"
+    }
 
     fn oauth(&self) -> &OAuth2 {
         &self.oauth
@@ -72,7 +74,7 @@ impl Provider for GitHub {
 impl From<GitHubUser> for SocialUser {
     fn from(u: GitHubUser) -> Self {
         SocialUser {
-            provider: GitHub::NAME,
+            provider: "github",
             id: u.id.to_string(),
             name: u.name.or(Some(u.login)),
             email: u.email,

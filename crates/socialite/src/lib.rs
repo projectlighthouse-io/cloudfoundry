@@ -1,7 +1,18 @@
 //! OAuth login with third-party providers.
 //!
-//! Each provider ([`GitHub`], [`Google`]) implements [`Provider`]: its
-//! endpoints and how to fetch the user. The flow is shared:
+//! Each provider implements [`Provider`]: its endpoints and how to fetch the
+//! user. The flow is shared. Providers are Cargo features, so an app compiles
+//! only the ones it uses:
+//!
+//! | Feature | Provider |
+//! | --- | --- |
+//! | `github` | [`GitHub`] |
+//! | `gitlab` | `GitLab` (gitlab.com or self-hosted) |
+//! | `google` | `Google` |
+//! | `reddit` | `Reddit` |
+//! | `twitter` | `Twitter` (X) |
+//! | `oidc` | `Oidc`: any OpenID Connect provider, by discovery or explicit endpoints |
+//! | `auth0` | `Auth0` (implies `oidc`) |
 //!
 //! ```ignore
 //! use socialite::Provider;
@@ -13,7 +24,7 @@
 //!
 //! // GET /auth/google/callback
 //! async fn callback(cx: Cx<App>, (auth, session, Query(cb)): (Auth<User>, Session, Query<Callback>)) -> ... {
-//!     let social: SocialUser = cx.google.user(&session, cb).await?.into();   // checks `state`, trades the code
+//!     let social = cx.google.social_user(&session, cb).await?;   // checks `state`, trades the code
 //!     let user = cx.users.find_or_create_social(&social).await?;
 //!     auth.login(&user);
 //!     Ok(Redirect::to_route("dashboard"))
@@ -30,7 +41,8 @@ use session::Session;
 use sha2::{Digest, Sha256};
 
 mod providers;
-pub use providers::{GitHub, GitHubUser, Google, GoogleUser};
+#[allow(unused_imports)] // empty when no provider feature is on
+pub use providers::*;
 
 /// The query string the provider redirects back with.
 #[derive(Debug, Deserialize)]
@@ -53,7 +65,7 @@ pub struct Token {
 /// provider the same way (find or create the account, log in).
 #[derive(Debug, Clone)]
 pub struct SocialUser {
-    /// [`Provider::NAME`], e.g. `"google"`.
+    /// [`Provider::name`], e.g. `"google"`.
     pub provider: &'static str,
     /// The provider's stable id for this user.
     pub id: String,
@@ -94,6 +106,15 @@ impl From<reqwest::Error> for Error {
     }
 }
 
+/// How the client authenticates to the token endpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ClientAuth {
+    /// `client_secret` in the form body (`client_secret_post`).
+    Post,
+    /// HTTP Basic with the id and secret (`client_secret_basic`), as Reddit and X require.
+    Basic,
+}
+
 /// Client credentials and endpoints: the part every provider shares.
 pub struct OAuth2 {
     pub client_id: String,
@@ -102,6 +123,9 @@ pub struct OAuth2 {
     pub scopes: Vec<String>,
     pub authorize_url: String,
     pub token_url: String,
+    pub client_auth: ClientAuth,
+    /// Send PKCE (`S256`). On by default; off for providers that reject it.
+    pub pkce: bool,
     pub http: reqwest::Client,
 }
 
@@ -114,7 +138,9 @@ impl OAuth2 {
             scopes: Vec::new(),
             authorize_url: String::new(),
             token_url: String::new(),
-            http: reqwest::Client::new(),
+            client_auth: ClientAuth::Post,
+            pkce: true,
+            http: reqwest::Client::builder().user_agent("socialite").build().expect("default TLS backend"),
         }
     }
 }
@@ -125,8 +151,8 @@ pub trait Provider: Send + Sync {
     /// The provider's user, as its API returns it.
     type User: Into<SocialUser> + Send;
 
-    /// Short name, used in session keys and in [`SocialUser::provider`].
-    const NAME: &'static str;
+    /// Short name, used in session keys, routes and [`SocialUser::provider`].
+    fn name(&self) -> &'static str;
 
     fn oauth(&self) -> &OAuth2;
 
@@ -141,17 +167,19 @@ pub trait Provider: Send + Sync {
     /// Where to send the user. Stores a fresh `state` and PKCE verifier in the session.
     fn authorize_url(&self, session: &Session) -> String {
         let (state, verifier) = (random(), random());
-        session.insert(&state_key::<Self>(), &state).expect("a string serializes");
-        session.insert(&pkce_key::<Self>(), &verifier).expect("a string serializes");
         let o = self.oauth();
+        session.insert(&key("state", self.name()), &state).expect("a string serializes");
         let mut params = vec![
             ("client_id", o.client_id.clone()),
             ("response_type", "code".to_owned()),
             ("redirect_uri", o.redirect_url.clone()),
             ("scope", o.scopes.join(" ")),
-            ("code_challenge", URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))),
-            ("code_challenge_method", "S256".to_owned()),
         ];
+        if o.pkce {
+            session.insert(&key("pkce", self.name()), &verifier).expect("a string serializes");
+            params.push(("code_challenge", URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))));
+            params.push(("code_challenge_method", "S256".to_owned()));
+        }
         params.extend(self.extra_params());
         params.push(("state", state));
         format!("{}?{}", o.authorize_url, serde_urlencoded::to_string(params).expect("strings urlencode"))
@@ -161,10 +189,11 @@ pub trait Provider: Send + Sync {
     /// verifier) for a token, fetch the user.
     fn user(&self, session: &Session, cb: Callback) -> impl Future<Output = Result<Self::User, Error>> + Send {
         async move {
-            let expected: Option<String> = session.get(&state_key::<Self>()).ok().flatten();
-            let verifier: Option<String> = session.get(&pkce_key::<Self>()).ok().flatten();
-            session.remove(&state_key::<Self>()); // one use, success or not
-            session.remove(&pkce_key::<Self>());
+            let (state_key, pkce_key) = (key("state", self.name()), key("pkce", self.name()));
+            let expected: Option<String> = session.get(&state_key).ok().flatten();
+            let verifier: Option<String> = session.get(&pkce_key).ok().flatten();
+            session.remove(&state_key); // one use, success or not
+            session.remove(&pkce_key);
             match (expected, &cb.state) {
                 (Some(e), Some(got)) if ct_eq(&e, got) => {}
                 _ => return Err(Error::State),
@@ -177,6 +206,16 @@ pub trait Provider: Send + Sync {
             self.fetch_user(token).await
         }
     }
+
+    /// [`user`](Self::user) as a [`SocialUser`] tagged with this provider's
+    /// [`name`](Self::name): one code path for every provider.
+    fn social_user(&self, session: &Session, cb: Callback) -> impl Future<Output = Result<SocialUser, Error>> + Send {
+        async move {
+            let mut social: SocialUser = self.user(session, cb).await?.into();
+            social.provider = self.name();
+            Ok(social)
+        }
+    }
 }
 
 async fn exchange(o: &OAuth2, code: &str, verifier: Option<&str>) -> Result<Token, Error> {
@@ -187,29 +226,24 @@ async fn exchange(o: &OAuth2, code: &str, verifier: Option<&str>) -> Result<Toke
         expires_in: Option<u64>,
         error: Option<String>,
     }
-    let mut form = vec![
-        ("grant_type", "authorization_code"),
-        ("client_id", o.client_id.as_str()),
-        ("client_secret", &o.client_secret),
-        ("code", code),
-        ("redirect_uri", &o.redirect_url),
-    ];
+    let mut form = vec![("grant_type", "authorization_code"), ("client_id", o.client_id.as_str()), ("code", code), ("redirect_uri", &o.redirect_url)];
     if let Some(v) = verifier {
         form.push(("code_verifier", v));
     }
-    let raw: Raw = o.http.post(&o.token_url).header("accept", "application/json").form(&form).send().await?.error_for_status()?.json().await?;
+    let mut req = o.http.post(&o.token_url).header("accept", "application/json");
+    match o.client_auth {
+        ClientAuth::Post => form.push(("client_secret", &o.client_secret)),
+        ClientAuth::Basic => req = req.basic_auth(&o.client_id, Some(&o.client_secret)),
+    }
+    let raw: Raw = req.form(&form).send().await?.error_for_status()?.json().await?;
     match raw {
         Raw { access_token: Some(access_token), refresh_token, expires_in, .. } => Ok(Token { access_token, refresh_token, expires_in }),
         Raw { error, .. } => Err(Error::Denied(error.unwrap_or_else(|| "no access token".into()))),
     }
 }
 
-fn state_key<P: Provider + ?Sized>() -> String {
-    format!("_oauth_state:{}", P::NAME)
-}
-
-fn pkce_key<P: Provider + ?Sized>() -> String {
-    format!("_oauth_pkce:{}", P::NAME)
+fn key(kind: &str, provider: &str) -> String {
+    format!("_oauth_{kind}:{provider}")
 }
 
 fn random() -> String {

@@ -1,3 +1,5 @@
+#![cfg(feature = "google")]
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
