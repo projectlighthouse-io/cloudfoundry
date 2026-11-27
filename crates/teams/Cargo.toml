@@ -34,16 +34,122 @@ securecookie = { path = "../securecookie" }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [package.metadata.art.publish]
+"stubs/access.rs" = "src/access.rs"
+"stubs/handlers/team.rs" = "src/handlers/team.rs"
+"stubs/handlers/organization.rs" = "src/handlers/organization.rs"
+"stubs/handlers/invitation.rs" = "src/handlers/invitation.rs"
+"stubs/requests/team.rs" = "src/requests/team.rs"
 "stubs/migrations/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
 
 [package.metadata.art.publish-sqlite]
+"stubs/sqlite/access.rs" = "src/access.rs"
+"stubs/handlers/team.rs" = "src/handlers/team.rs"
+"stubs/handlers/organization.rs" = "src/handlers/organization.rs"
+"stubs/handlers/invitation.rs" = "src/handlers/invitation.rs"
+"stubs/requests/team.rs" = "src/requests/team.rs"
 "stubs/migrations/sqlite/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
 
 [package.metadata.art.publish-mysql]
+"stubs/mysql/access.rs" = "src/access.rs"
+"stubs/handlers/team.rs" = "src/handlers/team.rs"
+"stubs/handlers/organization.rs" = "src/handlers/organization.rs"
+"stubs/handlers/invitation.rs" = "src/handlers/invitation.rs"
+"stubs/requests/team.rs" = "src/requests/team.rs"
 "stubs/migrations/mysql/create_teams.up.sql" = "migrations/{timestamp}_create_teams.up.sql"
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
+
+# `art publish teams --with-ui`: Inertia handlers and Vue pages. Entries are
+# added to the driver's table; one with the same destination replaces it.
+[package.metadata.art.with-ui]
+"stubs/ui/handlers/team.rs" = "src/handlers/team.rs"
+"stubs/ui/handlers/organization.rs" = "src/handlers/organization.rs"
+"stubs/ui/handlers/invitation.rs" = "src/handlers/invitation.rs"
+"stubs/pages/teams/index.vue" = "resources/js/pages/teams/index.vue"
+"stubs/pages/teams/show.vue" = "resources/js/pages/teams/show.vue"
+"stubs/pages/organizations/index.vue" = "resources/js/pages/organizations/index.vue"
+"stubs/pages/organizations/show.vue" = "resources/js/pages/organizations/show.vue"
+"stubs/pages/invitations/show.vue" = "resources/js/pages/invitations/show.vue"
+
+[package.metadata.art]
+agents = """
+- Roles (`TeamRole`, `OrgRole`) and permissions (unit structs with `teams::Grants` impls) live in `src/access.rs`. Add a permission there, then take `Can<MyPermission, TeamRole>` (or `OrgCan<_, OrgRole>`) in the handler: it is `404` for non-members and `403` without the permission.
+- Routes name their team by id: `/teams/{team}/...`, `/organizations/{org}/...`. `Membership<TeamRole>` loads `{team}` for any member; `CurrentTeam<TeamRole>` is the team to land on.
+- Change teams through `access::teams(&cx.db)` (`create_team`, `add_member`, `change_role`, `invite`, `accept`, ...): it enforces the last-owner and org-membership rules. Map its errors with `access::failed`.
+- Docs: https://toolkit.projectlighthouse.io/docs/crates/teams.md"""
+notes = """
+Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session"] }`
+(`<driver>` is sqlite, postgres or mysql), then:
+
+  src/main.rs           mod access;
+                        .layer(teams::layer(access::teams(&app.db), teams::auth_user(|u: &users::User| u.id)))   // after auth::layer
+  src/handlers/mod.rs   pub mod invitation; pub mod organization; pub mod team;
+  src/requests/mod.rs   pub mod team;
+  src/routes.rs         r.group("", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/teams", handlers::team::index).name("teams");
+                            r.post("/teams", handlers::team::store).name("teams.store");
+                            r.get("/teams/{team}", handlers::team::show).name("teams.show");
+                            r.put("/teams/{team}", handlers::team::update).name("teams.update");
+                            r.delete("/teams/{team}", handlers::team::destroy).name("teams.destroy");
+                            r.post("/teams/{team}/switch", handlers::team::switch).name("teams.switch");
+                            r.delete("/teams/{team}/membership", handlers::team::leave).name("teams.leave");
+                            r.put("/teams/{team}/members/{user}", handlers::team::update_member).name("teams.members.update");
+                            r.delete("/teams/{team}/members/{user}", handlers::team::remove_member).name("teams.members.destroy");
+                            r.post("/teams/{team}/invitations", handlers::team::invite).name("teams.invitations.store");
+                            r.delete("/teams/{team}/invitations/{invitation}", handlers::team::revoke).name("teams.invitations.destroy");
+                            r.get("/organizations", handlers::organization::index).name("organizations");
+                            r.post("/organizations", handlers::organization::store).name("organizations.store");
+                            r.get("/organizations/{org}", handlers::organization::show).name("organizations.show");
+                            r.put("/organizations/{org}", handlers::organization::update).name("organizations.update");
+                            r.delete("/organizations/{org}", handlers::organization::destroy).name("organizations.destroy");
+                            r.delete("/organizations/{org}/membership", handlers::organization::leave).name("organizations.leave");
+                            r.put("/organizations/{org}/members/{user}", handlers::organization::update_member).name("organizations.members.update");
+                            r.delete("/organizations/{org}/members/{user}", handlers::organization::remove_member).name("organizations.members.destroy");
+                            r.post("/organizations/{org}/invitations", handlers::organization::invite).name("organizations.invitations.store");
+                            r.delete("/organizations/{org}/invitations/{invitation}", handlers::organization::revoke).name("organizations.invitations.destroy");
+                            r.post("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
+                        });
+
+Then run `art migrate`. Roles and permissions are in src/access.rs. Invitation
+links are logged until you send them by mail (`send_invitation` in src/access.rs)."""
+with-ui-notes = """
+Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session"] }`
+(`<driver>` is sqlite, postgres or mysql), then:
+
+  src/main.rs           mod access;
+                        .layer(teams::layer(access::teams(&app.db), teams::auth_user(|u: &users::User| u.id)))   // after auth::layer
+  src/handlers/mod.rs   pub mod invitation; pub mod organization; pub mod team;
+  src/requests/mod.rs   pub mod team;
+  src/routes.rs         r.group("", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/teams", handlers::team::index).name("teams");
+                            r.post("/teams", handlers::team::store).name("teams.store");
+                            r.get("/teams/{team}", handlers::team::show).name("teams.show");
+                            r.put("/teams/{team}", handlers::team::update).name("teams.update");
+                            r.delete("/teams/{team}", handlers::team::destroy).name("teams.destroy");
+                            r.post("/teams/{team}/switch", handlers::team::switch).name("teams.switch");
+                            r.delete("/teams/{team}/membership", handlers::team::leave).name("teams.leave");
+                            r.put("/teams/{team}/members/{user}", handlers::team::update_member).name("teams.members.update");
+                            r.delete("/teams/{team}/members/{user}", handlers::team::remove_member).name("teams.members.destroy");
+                            r.post("/teams/{team}/invitations", handlers::team::invite).name("teams.invitations.store");
+                            r.delete("/teams/{team}/invitations/{invitation}", handlers::team::revoke).name("teams.invitations.destroy");
+                            r.get("/organizations", handlers::organization::index).name("organizations");
+                            r.post("/organizations", handlers::organization::store).name("organizations.store");
+                            r.get("/organizations/{org}", handlers::organization::show).name("organizations.show");
+                            r.put("/organizations/{org}", handlers::organization::update).name("organizations.update");
+                            r.delete("/organizations/{org}", handlers::organization::destroy).name("organizations.destroy");
+                            r.delete("/organizations/{org}/membership", handlers::organization::leave).name("organizations.leave");
+                            r.put("/organizations/{org}/members/{user}", handlers::organization::update_member).name("organizations.members.update");
+                            r.delete("/organizations/{org}/members/{user}", handlers::organization::remove_member).name("organizations.members.destroy");
+                            r.post("/organizations/{org}/invitations", handlers::organization::invite).name("organizations.invitations.store");
+                            r.delete("/organizations/{org}/invitations/{invitation}", handlers::organization::revoke).name("organizations.invitations.destroy");
+                            r.get("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
+                        });
+
+Then run `art migrate`. Roles and permissions are in src/access.rs. Invitation
+links are logged until you send them by mail (`send_invitation` in src/access.rs)."""
 
 [lints]
 workspace = true

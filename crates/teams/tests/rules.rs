@@ -121,6 +121,10 @@ async fn org_team_invitations_need_org_membership() {
     t.accept(&to_team.token, BOB, "bob@example.com").await.unwrap();
     assert_eq!(t.store().team_role(team.id, BOB).await.unwrap(), Some(TeamRole::Member));
 
-    t.revoke(t.invite(Target::Org { org: org.id, role: OrgRole::Admin }, "cy@example.com", ADA, day).await.unwrap().invitation.id).await.unwrap();
+    let pending = t.invite(Target::Org { org: org.id, role: OrgRole::Admin }, "cy@example.com", ADA, day).await.unwrap().invitation.id;
+    let other = t.create_org(BOB, "Other").await.unwrap();
+    assert!(matches!(t.revoke_org_invitation(&other, pending).await, Err(Error::NotFound)), "only the org's own invitations");
+    assert!(matches!(t.revoke_team_invitation(&team, pending).await, Err(Error::NotFound)));
+    t.revoke_org_invitation(&org, pending).await.unwrap();
     assert!(t.store().org_invitations(org.id).await.unwrap().is_empty());
 }

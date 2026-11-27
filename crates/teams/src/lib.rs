@@ -435,8 +435,19 @@ impl<S: Store> Teams<S> {
         Ok(invitation.target)
     }
 
-    /// Withdraw an invitation.
-    pub async fn revoke(&self, invitation: i64) -> Result<(), Error> {
+    /// Withdraw one of `team`'s invitations. [`Error::NotFound`] if it is not one of them.
+    pub async fn revoke_team_invitation(&self, team: &Team, invitation: i64) -> Result<(), Error> {
+        if !self.0.team_invitations(team.id).await?.iter().any(|i| i.id == invitation) {
+            return Err(Error::NotFound);
+        }
+        self.0.delete_invitation(invitation).await
+    }
+
+    /// Withdraw one of `org`'s invitations. [`Error::NotFound`] if it is not one of them.
+    pub async fn revoke_org_invitation(&self, org: &Org, invitation: i64) -> Result<(), Error> {
+        if !self.0.org_invitations(org.id).await?.iter().any(|i| i.id == invitation) {
+            return Err(Error::NotFound);
+        }
         self.0.delete_invitation(invitation).await
     }
 
