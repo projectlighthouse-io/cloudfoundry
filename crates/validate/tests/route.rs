@@ -42,3 +42,31 @@ async fn valid_input_reaches_the_handler_and_invalid_gets_422() {
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(json["errors"]["name"][0], "This field is required.");
 }
+
+#[derive(Deserialize)]
+struct Renamed {
+    name: String,
+}
+
+impl Validate for Renamed {
+    fn validate(&self, e: &mut Errors) {
+        e.field("name", &self.name).required();
+    }
+
+    fn messages(&self) -> validate::Messages {
+        validate::Messages::new().set("name.required", "Name must be provided for this action.")
+    }
+}
+
+#[tokio::test]
+async fn custom_messages_reach_the_422_through_json() {
+    let mut r = Router::new();
+    r.post("/", |input: Valid<Json<Renamed>>| async move { input.name.clone() });
+    let routes = r.build(()).unwrap();
+    let req = Request::post("/").header(header::CONTENT_TYPE, "application/json").body(body(r#"{"name":""}"#)).unwrap();
+    let res = routes.handle(req).await;
+    assert_eq!(res.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let bytes = http_body_util::BodyExt::collect(res.into_body()).await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["errors"]["name"][0], "Name must be provided for this action.");
+}

@@ -53,11 +53,22 @@ impl Errors {
 }
 
 impl<T: ?Sized> Field<'_, '_, T> {
-    /// Run any rule: one of this crate's functions or your own.
-    pub fn rule(mut self, f: impl FnOnce(&T) -> Result<(), Message>) -> Self {
+    /// Run any rule: one of this crate's functions or your own. Its message
+    /// cannot be replaced from [`Validate::messages`](crate::Validate::messages);
+    /// use [`rule_named`](Self::rule_named) for that.
+    pub fn rule(self, f: impl FnOnce(&T) -> Result<(), Message>) -> Self {
+        self.run(None, f)
+    }
+
+    /// Run a rule under a name, so `messages()` can reword it as `field.name`.
+    pub fn rule_named(self, name: &str, f: impl FnOnce(&T) -> Result<(), Message>) -> Self {
+        self.run(Some(name), f)
+    }
+
+    fn run(mut self, name: Option<&str>, f: impl FnOnce(&T) -> Result<(), Message>) -> Self {
         if let (false, Some(v)) = (self.failed, self.value) {
             if let Err(m) = f(v) {
-                self.errors.add(self.name, m);
+                self.errors.fail(self.name, name, m);
                 self.failed = true;
             }
         }
@@ -70,7 +81,7 @@ macro_rules! text_rules {
     ($($(#[$m:meta])* $name:ident($($arg:ident: $ty:ty),*);)*) => {
         impl<T: AsRef<str> + ?Sized> Field<'_, '_, T> {
             $($(#[$m])* pub fn $name(self, $($arg: $ty),*) -> Self {
-                self.rule(|v| rules::$name(v.as_ref(), $($arg),*))
+                self.rule_named(stringify!($name), |v| rules::$name(v.as_ref(), $($arg),*))
             })*
         }
     };
@@ -102,35 +113,35 @@ text_rules! {
 
 impl<N: PartialOrd + fmt::Display + Copy> Field<'_, '_, N> {
     pub fn between(self, min: N, max: N) -> Self {
-        self.rule(|v| rules::between(v, min, max))
+        self.rule_named("between", |v| rules::between(v, min, max))
     }
 
     pub fn at_least(self, min: N) -> Self {
-        self.rule(|v| rules::at_least(v, min))
+        self.rule_named("at_least", |v| rules::at_least(v, min))
     }
 
     pub fn at_most(self, max: N) -> Self {
-        self.rule(|v| rules::at_most(v, max))
+        self.rule_named("at_most", |v| rules::at_most(v, max))
     }
 }
 
 impl<I> Field<'_, '_, [I]> {
     pub fn min_items(self, min: usize) -> Self {
-        self.rule(|v| rules::min_items(v, min))
+        self.rule_named("min_items", |v| rules::min_items(v, min))
     }
 
     pub fn max_items(self, max: usize) -> Self {
-        self.rule(|v| rules::max_items(v, max))
+        self.rule_named("max_items", |v| rules::max_items(v, max))
     }
 }
 
 impl<I> Field<'_, '_, Vec<I>> {
     pub fn min_items(self, min: usize) -> Self {
-        self.rule(|v| rules::min_items(v, min))
+        self.rule_named("min_items", |v| rules::min_items(v, min))
     }
 
     pub fn max_items(self, max: usize) -> Self {
-        self.rule(|v| rules::max_items(v, max))
+        self.rule_named("max_items", |v| rules::max_items(v, max))
     }
 }
 
@@ -156,6 +167,43 @@ mod tests {
         e.optional("site", Some("nope")).url();
         assert!(e.get("bio").is_empty());
         assert_eq!(e.get("site").len(), 1);
+    }
+
+    #[test]
+    fn messages_table_rewords_chosen_rules() {
+        use crate::{Message, Messages, Valid, Validate, rule};
+
+        #[derive(Debug)]
+        struct Form {
+            name: String,
+            repo: String,
+            title: String,
+        }
+        fn slug(s: &str) -> Result<(), Message> {
+            rule(s.contains('/'), "Use owner/name.")
+        }
+        impl Validate for Form {
+            fn validate(&self, e: &mut Errors) {
+                e.field("name", &self.name).required();
+                e.field("repo", &self.repo).rule_named("slug", |s| slug(s));
+                e.field("title", &self.title).required();
+            }
+            fn messages(&self) -> Messages {
+                Messages::new()
+                    .set("name.required", "Name must be provided for this action.")
+                    .set("repo.slug", "Which repository should this pipeline build?")
+            }
+        }
+
+        let e = Valid::check(Form { name: String::new(), repo: "acme".into(), title: String::new() }).unwrap_err();
+        assert_eq!(e.get("name"), ["Name must be provided for this action."]);
+        assert_eq!(e.get("repo"), ["Which repository should this pipeline build?"]);
+        assert_eq!(e.get("title"), ["This field is required."], "rules not listed keep the default");
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"name":["Name must be provided for this action."],"repo":["Which repository should this pipeline build?"],"title":["This field is required."]}"#,
+            "same JSON shape as before"
+        );
     }
 
     #[test]

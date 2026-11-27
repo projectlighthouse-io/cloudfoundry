@@ -127,17 +127,69 @@ pub type Message = Cow<'static, str>;
 pub trait Validate {
     /// Run every rule, recording each failure in `e`.
     fn validate(&self, e: &mut Errors);
+
+    /// Your wording for chosen rules, keyed `field.rule`
+    /// (`"name.required"`). Rules not listed keep their default message.
+    fn messages(&self) -> Messages {
+        Messages::default()
+    }
+}
+
+/// Custom messages for a [`Validate`] type, keyed `field.rule`:
+/// `Messages::new().set("name.required", "Name must be provided for this action.")`.
+/// The rule part is the chain method's name (`required`, `max_len`, `email`, ...)
+/// or the key given to [`Field::rule_named`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Messages(BTreeMap<String, Message>);
+
+impl Messages {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn set(mut self, key: &str, message: impl Into<Message>) -> Self {
+        self.0.insert(key.to_owned(), message.into());
+        self
+    }
 }
 
 /// Every failed rule, keyed by the field name the client sent.
 /// Serializes as `{"field": ["message", ...]}`.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct Errors(BTreeMap<String, Vec<Message>>);
+#[derive(Clone, Debug, Default)]
+pub struct Errors {
+    errors: BTreeMap<String, Vec<Message>>,
+    messages: Messages,
+}
+
+impl PartialEq for Errors {
+    fn eq(&self, other: &Self) -> bool {
+        self.errors == other.errors
+    }
+}
+
+impl Eq for Errors {}
+
+impl Serialize for Errors {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.errors.serialize(s)
+    }
+}
 
 impl Errors {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Errors that report `messages` in place of chosen rules' defaults.
+    pub fn with_messages(messages: Messages) -> Self {
+        Self { errors: BTreeMap::new(), messages }
+    }
+
+    /// Record a failure of the rule `rule` on `field`: the custom message for
+    /// `field.rule` if one is set, otherwise `default`.
+    pub(crate) fn fail(&mut self, field: &str, rule: Option<&str>, default: Message) {
+        let custom = rule.and_then(|r| self.messages.0.get(&format!("{field}.{r}")).cloned());
+        self.add(field, custom.unwrap_or(default));
     }
 
     /// Record `result` for `field` if it is an error.
@@ -149,20 +201,20 @@ impl Errors {
     }
 
     pub fn add(&mut self, field: &str, message: impl Into<Message>) -> &mut Self {
-        self.0.entry(field.to_owned()).or_default().push(message.into());
+        self.errors.entry(field.to_owned()).or_default().push(message.into());
         self
     }
 
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.errors.is_empty()
     }
 
     pub fn get(&self, field: &str) -> &[Message] {
-        self.0.get(field).map_or(&[], Vec::as_slice)
+        self.errors.get(field).map_or(&[], Vec::as_slice)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&str, &[Message])> {
-        self.0.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
+        self.errors.iter().map(|(k, v)| (k.as_str(), v.as_slice()))
     }
 }
 
@@ -191,7 +243,7 @@ pub struct Valid<T>(T);
 impl<T: Validate> Valid<T> {
     /// Validate `value`. All rules run; the error holds every failure.
     pub fn check(value: T) -> Result<Self, Errors> {
-        let mut e = Errors::new();
+        let mut e = Errors::with_messages(value.messages());
         value.validate(&mut e);
         if e.is_empty() { Ok(Valid(value)) } else { Err(e) }
     }

@@ -16,6 +16,10 @@ macro_rules! delegate {
             fn validate(&self, e: &mut Errors) {
                 self.0.validate(e)
             }
+
+            fn messages(&self) -> crate::Messages {
+                self.0.messages()
+            }
         }
     )*};
 }
