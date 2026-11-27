@@ -2271,6 +2271,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "throttle"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+]
+
+[[package]]
 name = "tinystr"
 version = "0.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
