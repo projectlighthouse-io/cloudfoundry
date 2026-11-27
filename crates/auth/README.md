@@ -19,8 +19,16 @@ router.layer(session_layer).layer(auth::layer(users));
 r.group("/runs", |r| { r.layer(auth::require::<User>()); /* ... */ });
 
 async fn me(user: auth::Authed<User>) -> String { user.email.clone() }
-async fn login((auth, input): (auth::Auth<User>, Valid<Json<Login>>)) -> Redirect { /* auth.login(&user) */ }
+async fn login((auth, input): (auth::Auth<User>, Valid<Json<Login>>)) -> Result<Redirect, Errors> {
+    auth.attempt(&users, &input.email, &input.password, input.remember).await?; // map AttemptError to your errors
+    Ok(Redirect::to_route("home"))
+}
 ```
+
+`attempt` needs `auth::Credentials` (find by login, read and store the password hash). It
+checks the password off the async runtime, upgrades hashes made with older settings, and
+logs in. With feature `throttle`, `.throttle(limiter)` on the layer limits failed attempts per
+login and IP (`Limiter::memory(FixedWindow::new(5, Duration::from_secs(60)))` is Laravel's default).
 
 "Remember me": implement `auth::Remember` and add `.remember(codec)`; then
 `auth.login_remember(&user)`. API tokens: implement `auth::Tokens` and add

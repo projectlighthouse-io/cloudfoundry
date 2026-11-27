@@ -1,36 +1,33 @@
 //! Published by `art publish auth`. App code: change it freely.
 
-use auth::Auth;
-use route::{Body, Cx, IntoResponse, Json, Redirect, http::Response};
+use auth::{AttemptError, Auth};
+use route::{Body, Cx, IntoResponse, Json, Redirect, http::{Response, StatusCode}};
 use validate::{Errors, Valid};
 
-use crate::{error::AppError, requests::login::Login, state::App, users::{User, Users}};
+use crate::{requests::login::Login, state::App, users::{User, Users}};
 
 pub async fn show(_: ()) -> inertia::Page<()> {
     inertia::render("auth/login", ())
 }
 
+/// `auth.attempt` throttles, checks the password, upgrades old hashes and logs
+/// in. Add your own checks around it (banned users, audit log, ...).
 pub async fn login(cx: Cx<App>, (auth, input): (Auth<User>, Valid<Json<Login>>)) -> Result<Redirect, Response<Body>> {
-    let failed = || {
-        let mut e = Errors::new();
-        e.add("email", "These credentials do not match our records.");
-        e.into_response()
-    };
-
     let users = Users { db: cx.db.clone() };
-    let user = users.by_email(&input.email).await.map_err(|e| AppError::from(e).into_response())?;
-    let Some(user) = user else {
-        password::verify_none(&input.password);
-        return Err(failed());
+    let message = match auth.attempt(&users, &input.email, &input.password, input.remember).await {
+        Ok(_user) => return Ok(Redirect::to_route("home")),
+        Err(AttemptError::Failed) => "These credentials do not match our records.".to_owned(),
+        Err(AttemptError::Throttled(wait)) => {
+            format!("Too many login attempts. Please try again in {} seconds.", wait.as_secs().max(1))
+        }
+        Err(AttemptError::Other(e)) => {
+            tracing::error!("login: {e}");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        }
     };
-    password::verify(&input.password, &user.password_hash).map_err(|_| failed())?;
-
-    if input.remember {
-        auth.login_remember(&user);
-    } else {
-        auth.login(&user);
-    }
-    Ok(Redirect::to_route("home"))
+    let mut errors = Errors::new();
+    errors.add("email", message);
+    Err(errors.into_response())
 }
 
 pub async fn logout(auth: Auth<User>) -> Redirect {

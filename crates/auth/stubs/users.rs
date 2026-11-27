@@ -43,6 +43,26 @@ impl auth::Provider for Users {
     }
 }
 
+/// Login with email and password: `auth.attempt(&users, email, password, remember)`.
+impl auth::Credentials for Users {
+    async fn by_login(&self, email: &str) -> Result<Option<User>, auth::Error> {
+        Ok(self.by_email(email).await?)
+    }
+
+    fn password_hash(&self, user: &User) -> String {
+        user.password_hash.clone()
+    }
+
+    async fn set_password_hash(&self, id: i64, hash: String) -> Result<(), auth::Error> {
+        sqlx::query("update users set password_hash = $1 where id = $2")
+            .bind(hash)
+            .bind(id)
+            .execute(self.db.pool())
+            .await?;
+        Ok(())
+    }
+}
+
 /// "Remember me": enable with `auth::layer(users).remember(codec)`.
 impl auth::Remember for Users {
     fn remember_token(&self, user: &User) -> Option<String> {

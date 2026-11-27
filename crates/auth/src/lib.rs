@@ -8,12 +8,17 @@
 //! - [`require`] / [`guest`]: layers for routes whose handlers take neither.
 //! - [`Remember`] + `.remember(codec)`: "remember me" cookies.
 //! - [`Tokens`] + `.tokens()`: `Authorization: Bearer` for APIs.
+//! - [`Credentials`] + [`Auth::attempt`]: check a login and password, rehash
+//!   old hashes, log in. With feature `throttle`, `.throttle(limiter)` limits
+//!   failed attempts per login and IP.
 //!
 //! Only the user id is stored in the session. The user is loaded at most once
 //! per request, and only if something asks.
 
 use std::{
+    fmt,
     future::Future,
+    net::IpAddr,
     ops::Deref,
     pin::Pin,
     sync::{Arc, Mutex},
@@ -25,7 +30,7 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use securecookie::Codec;
 
 use route::{
-    Body, FromRequest, FromRequestParts, IntoResponse, Redirect, UrlFor,
+    Body, ClientAddr, FromRequest, FromRequestParts, IntoResponse, Redirect, UrlFor,
     http::{Extensions, HeaderMap, HeaderValue, Request, Response, StatusCode, header, request::Parts},
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -84,6 +89,62 @@ pub trait Tokens: Provider {
     fn by_token(&self, token: &str) -> impl Future<Output = Result<Option<Self::User>, Error>> + Send;
 }
 
+/// Providers that can check a password, for [`Auth::attempt`].
+pub trait Credentials: Provider {
+    /// The user who logs in as `login` (usually the email address).
+    fn by_login(&self, login: &str) -> impl Future<Output = Result<Option<Self::User>, Error>> + Send;
+    /// The user's stored `password::hash`.
+    fn password_hash(&self, user: &Self::User) -> String;
+    /// Store a new hash for the user with `id`.
+    fn set_password_hash(&self, id: Self::Id, hash: String) -> impl Future<Output = Result<(), Error>> + Send;
+}
+
+/// Why [`Auth::attempt`] did not log the user in.
+#[derive(Debug)]
+pub enum AttemptError {
+    /// Unknown login or wrong password. Deliberately not told apart.
+    Failed,
+    /// Too many failed attempts for this login and IP; try again after this long.
+    Throttled(Duration),
+    /// The provider or throttle store failed.
+    Other(Error),
+}
+
+impl fmt::Display for AttemptError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Failed => f.write_str("these credentials do not match our records"),
+            Self::Throttled(d) => write!(f, "too many login attempts; try again in {} seconds", d.as_secs().max(1)),
+            Self::Other(e) => write!(f, "login failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for AttemptError {}
+
+/// Failed-login limiter with its algorithm and store erased.
+trait LoginLimiter: Send + Sync {
+    /// `Some(retry_after)` when `key` may not try now.
+    fn check<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<Option<Duration>, Error>>;
+    fn hit<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), Error>>;
+    fn clear<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), Error>>;
+}
+
+#[cfg(feature = "throttle")]
+impl<A: throttle::Algorithm, St: throttle::Store> LoginLimiter for throttle::Limiter<A, St> {
+    fn check<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<Option<Duration>, Error>> {
+        Box::pin(async move { Ok(Some(throttle::Limiter::check(self, key).await?).filter(|d| !d.allowed).map(|d| d.retry_after)) })
+    }
+
+    fn hit<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), Error>> {
+        Box::pin(async move { throttle::Limiter::hit(self, key).await.map(drop) })
+    }
+
+    fn clear<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), Error>> {
+        Box::pin(throttle::Limiter::clear(self, key))
+    }
+}
+
 trait ErasedRemember<U>: Send + Sync {
     fn token_of(&self, user: &U) -> Option<String>;
     fn set(&self, id: Value, token: Option<String>) -> BoxFuture<'_, Result<(), Error>>;
@@ -132,6 +193,8 @@ struct AuthCx<U> {
     provider: Arc<dyn Erased<U>>,
     remember: Option<Arc<RememberCfg<U>>>,
     tokens: Option<Arc<dyn ErasedTokens<U>>>,
+    throttle: Option<Arc<dyn LoginLimiter>>,
+    ip: Option<IpAddr>,
     cfg: Arc<Config>,
     user: Arc<OnceCell<Option<U>>>,
     bearer: Option<Arc<str>>,
@@ -145,6 +208,8 @@ impl<U> Clone for AuthCx<U> {
             provider: self.provider.clone(),
             remember: self.remember.clone(),
             tokens: self.tokens.clone(),
+            throttle: self.throttle.clone(),
+            ip: self.ip,
             cfg: self.cfg.clone(),
             user: self.user.clone(),
             bearer: self.bearer.clone(),
@@ -299,13 +364,14 @@ fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &'static str) -
 /// Make `Auth<U>`, `Authed<U>`, `require` and `guest` work. Add after the
 /// session layer.
 pub fn layer<P: Provider>(provider: P) -> AuthLayer<P> {
-    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, cfg: Arc::new(Config { login_route: "login", secure: true }) }
+    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, throttle: None, cfg: Arc::new(Config { login_route: "login", secure: true }) }
 }
 
 pub struct AuthLayer<P: Provider> {
     provider: Arc<P>,
     remember: Option<Arc<RememberCfg<P::User>>>,
     tokens: Option<Arc<dyn ErasedTokens<P::User>>>,
+    throttle: Option<Arc<dyn LoginLimiter>>,
     cfg: Arc<Config>,
 }
 
@@ -318,6 +384,17 @@ impl<P: Provider> AuthLayer<P> {
     /// `Secure` on the remember cookie. Default `true` (browsers accept it on localhost).
     pub fn secure(self, secure: bool) -> Self {
         Self { cfg: Arc::new(Config { login_route: self.cfg.login_route, secure }), ..self }
+    }
+}
+
+#[cfg(feature = "throttle")]
+impl<P: Credentials> AuthLayer<P> {
+    /// Limit failed [`Auth::attempt`]s per login and client IP. A success
+    /// clears the count. Laravel's default is 5 per minute:
+    /// `.throttle(Limiter::memory(FixedWindow::new(5, Duration::from_secs(60))))`.
+    pub fn throttle<A: throttle::Algorithm, St: throttle::Store>(mut self, limiter: throttle::Limiter<A, St>) -> Self {
+        self.throttle = Some(Arc::new(limiter));
+        self
     }
 }
 
@@ -345,7 +422,13 @@ impl<P: Tokens> AuthLayer<P> {
 
 impl<P: Provider> Clone for AuthLayer<P> {
     fn clone(&self) -> Self {
-        Self { provider: self.provider.clone(), remember: self.remember.clone(), tokens: self.tokens.clone(), cfg: self.cfg.clone() }
+        Self {
+            provider: self.provider.clone(),
+            remember: self.remember.clone(),
+            tokens: self.tokens.clone(),
+            throttle: self.throttle.clone(),
+            cfg: self.cfg.clone(),
+        }
     }
 }
 
@@ -393,6 +476,8 @@ where
             provider,
             remember: l.remember.clone(),
             tokens: l.tokens.clone(),
+            throttle: l.throttle.clone(),
+            ip: req.extensions().get::<ClientAddr>().map(|a| a.0.ip()),
             cfg: l.cfg.clone(),
             user: Arc::new(OnceCell::new()),
             bearer: l.tokens.as_ref().and_then(|_| bearer(req.headers())).map(Into::into),
@@ -470,6 +555,72 @@ impl<U> Auth<U> {
             *self.cx.pending.lock().unwrap() = Pending::Forget { id };
         }
     }
+}
+
+impl<U: Clone + Send + Sync + 'static> Auth<U> {
+    /// Log in the user whose login and password match: the throttle check
+    /// (with `.throttle`), the lookup, `password::verify` off the async
+    /// runtime, a rehash when the stored hash uses old settings, then
+    /// [`login`](Self::login) or [`login_remember`](Self::login_remember).
+    /// Write the handler around it; add checks of your own before or after.
+    pub async fn attempt<P>(&self, users: &P, login: &str, password: &str, remember: bool) -> Result<U, AttemptError>
+    where
+        P: Credentials<User = U>,
+    {
+        let key = format!("login:{}|{}", login.trim().to_lowercase(), self.cx.ip.map(|ip| ip.to_string()).unwrap_or_default());
+        let throttle = self.cx.throttle.as_deref();
+        if let Some(t) = throttle {
+            if let Some(retry) = t.check(&key).await.map_err(AttemptError::Other)? {
+                return Err(AttemptError::Throttled(retry));
+            }
+        }
+
+        let user = users.by_login(login).await.map_err(AttemptError::Other)?;
+        let hash = user.as_ref().map(|u| users.password_hash(u));
+        let pw = password.to_owned();
+        let matched = blocking(move || match hash {
+            Some(hash) => password::verify(&pw, &hash).is_ok().then_some(hash),
+            None => {
+                password::verify_none(&pw);
+                None
+            }
+        })
+        .await?;
+
+        let (Some(user), Some(hash)) = (user, matched) else {
+            if let Some(t) = throttle {
+                t.hit(&key).await.map_err(AttemptError::Other)?;
+            }
+            return Err(AttemptError::Failed);
+        };
+        if let Some(t) = throttle {
+            t.clear(&key).await.map_err(AttemptError::Other)?;
+        }
+
+        if password::needs_rehash(&hash) {
+            let pw = password.to_owned();
+            match blocking(move || password::hash(&pw)).await? {
+                Ok(new) => {
+                    if let Err(e) = users.set_password_hash(users.id(&user), new).await {
+                        tracing::warn!("storing the rehashed password failed: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("rehashing the password failed: {e}"),
+            }
+        }
+
+        if remember {
+            self.login_remember(&user);
+        } else {
+            self.login(&user);
+        }
+        Ok(user)
+    }
+}
+
+/// Password hashing is CPU-heavy; keep it off the async worker threads.
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, AttemptError> {
+    tokio::task::spawn_blocking(f).await.map_err(|e| AttemptError::Other(e.into()))
 }
 
 impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for Auth<U> {

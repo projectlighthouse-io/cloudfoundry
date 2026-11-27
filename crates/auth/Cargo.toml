@@ -8,19 +8,28 @@ description = "Know who the current user is, and guard routes"
 [dependencies]
 base64 = "0.22"
 getrandom = "0.3"
+password = { path = "../password" }
 route = { path = "../route" }
 serde = "1"
 securecookie = { path = "../securecookie" }
 serde_json = "1"
 session = { path = "../session", features = ["route"] }
-tokio = { version = "1", features = ["sync"] }
+throttle = { path = "../throttle", optional = true }
+tokio = { version = "1", features = ["sync", "rt"] }
 tower = "0.5"
 tracing = "0.1"
 
+[features]
+# `AuthLayer::throttle(limiter)`: limit failed login attempts.
+throttle = ["dep:throttle"]
+
 [dev-dependencies]
+argon2 = "0.5"
+serde = { version = "1", features = ["derive"] }
 http-body-util = "0.1"
 securecookie = { path = "../securecookie" }
-tokio = { version = "1", features = ["macros", "rt"] }
+throttle = { path = "../throttle" }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [package.metadata.art.publish]
 "stubs/users.rs" = "src/users.rs"
@@ -48,11 +57,12 @@ tokio = { version = "1", features = ["macros", "rt"] }
 
 [package.metadata.art]
 notes = """
-Add the dependency `password = { <same source as auth> }`, then:
+Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
   src/main.rs           mod users;
-                        .layer(auth::layer(users::Users { db: app.db.clone() }))   // after the session and csrf layers
-                        // "remember me": .layer(auth::layer(users).remember(Codec::new(Keys::parse(&key)?)))
+                        .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
+                            .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
+                        // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
   src/handlers/mod.rs   pub mod login;
   src/requests/mod.rs   pub mod login;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");
