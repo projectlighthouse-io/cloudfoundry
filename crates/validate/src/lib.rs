@@ -110,8 +110,10 @@
 
 #[cfg(feature = "route")]
 mod extract;
+mod field;
 pub mod rules;
 
+pub use field::Field;
 pub use rules::*;
 
 use std::{borrow::Cow, collections::BTreeMap, fmt, ops::Deref};
