@@ -162,3 +162,10 @@ async fn old_hashes_are_upgraded_on_login() {
     assert!(!password::needs_rehash(&after));
     assert!(password::verify("bobpw", &after).is_ok());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn hash_password_makes_a_current_hash() {
+    let h = auth::hash_password("secret").await.unwrap();
+    assert!(password::verify("secret", &h).is_ok());
+    assert!(!password::needs_rehash(&h));
+}

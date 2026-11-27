@@ -37,6 +37,9 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
 "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+"stubs/handlers/register.rs" = "src/handlers/register.rs"
+"stubs/requests/register.rs" = "src/requests/register.rs"
+"stubs/pages/register.vue" = "resources/js/pages/auth/register.vue"
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -45,6 +48,9 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
 "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+"stubs/handlers/register.rs" = "src/handlers/register.rs"
+"stubs/requests/register.rs" = "src/requests/register.rs"
+"stubs/pages/register.vue" = "resources/js/pages/auth/register.vue"
 "stubs/sqlite/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -53,6 +59,9 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
 "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
+"stubs/handlers/register.rs" = "src/handlers/register.rs"
+"stubs/requests/register.rs" = "src/requests/register.rs"
+"stubs/pages/register.vue" = "resources/js/pages/auth/register.vue"
 "stubs/mysql/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/mysql/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -64,10 +73,12 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
-  src/handlers/mod.rs   pub mod login;
-  src/requests/mod.rs   pub mod login;
+  src/handlers/mod.rs   pub mod login; pub mod register;
+  src/requests/mod.rs   pub mod login; pub mod register;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");
                         r.post("/login", handlers::login::login).name("login.store");
                         r.post("/logout", handlers::login::logout).name("logout");
+                        r.get("/register", handlers::register::show).name("register");
+                        r.post("/register", handlers::register::store).name("register.store");
 
 Then run `art migrate`."""

@@ -669,6 +669,13 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
     }
 }
 
+/// `password::hash` off the async runtime, for registration and password
+/// changes.
+pub async fn hash_password(password: &str) -> Result<String, Error> {
+    let pw = password.to_owned();
+    Ok(tokio::task::spawn_blocking(move || password::hash(&pw)).await??)
+}
+
 /// Password hashing is CPU-heavy; keep it off the async worker threads.
 async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, AttemptError> {
     tokio::task::spawn_blocking(f).await.map_err(|e| AttemptError::Other(e.into()))

@@ -18,6 +18,16 @@ pub struct Users {
 }
 
 impl Users {
+    /// Insert a user and read it back. The unique index on `email` rejects duplicates.
+    pub async fn create(&self, email: &str, password_hash: &str) -> Result<User, sqlx::Error> {
+        sqlx::query("insert into users (email, password_hash) values (?, ?)")
+            .bind(email)
+            .bind(password_hash)
+            .execute(self.db.pool())
+            .await?;
+        self.by_email(email).await?.ok_or(sqlx::Error::RowNotFound)
+    }
+
     pub async fn by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
         sqlx::query_as("select id, email, password_hash, remember_token from users where email = ?")
             .bind(email)

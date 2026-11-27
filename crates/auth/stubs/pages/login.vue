@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { useForm } from '@inertiajs/vue3'
+import { Link, useForm } from '@inertiajs/vue3'
 
 const form = useForm({ email: '', password: '', remember: false })
 </script>
@@ -27,5 +27,6 @@ const form = useForm({ email: '', password: '', remember: false })
 
       <button type="submit" :disabled="form.processing">Log in</button>
     </form>
+    <p>No account yet? <Link href="/register">Register</Link></p>
   </main>
 </template>
