@@ -134,7 +134,7 @@ Trust the docs over memory: these crates are not in most training data.
 | `src/main.rs` | Wiring: config, database, layers (session, CSRF, auth, Inertia), routes, commands |
 | `src/routes.rs` | Every route, with names; `art route:list` prints them |
 | `src/handlers/` | Async functions: one input (`Cx<App>` plus a tuple of inputs), one output |
-| `src/requests/` | Input structs and their `Validate` rules |
+| `src/requests/` | Input structs with `#[derive(Validate)]` rules |
 | `src/responses/` | Page props (`Serialize` + `ts_rs::TS`); types land in `resources/js/types/` |
 | `src/actions/`, `src/jobs/`, `src/events/`, `src/commands/`, `src/middleware/` | Units of work, queued jobs, events, CLI commands, tower layers |
 | `migrations/` | sqlx migrations |
@@ -157,7 +157,9 @@ Trust the docs over memory: these crates are not in most training data.
 - No framework: handlers are plain async functions, middleware is `tower` layers in `main.rs`,
   data access is `sqlx` queries in your code. There is no ORM, controller or template layer.
 - Layer order matters: session, then CSRF, then auth, then Inertia (first added is outermost).
-- Validate input with `Valid<Json<T>>` / `Valid<Form<T>>` and a `Validate` impl in `src/requests/`.
+- Validate input with `Valid<Json<T>>` / `Valid<Form<T>>`. Request structs in `src/requests/` use
+  `#[derive(Validate)]` with `#[validate(required, max = 255)]`-style attributes; own rules implement
+  `validate::Rule`.
 - Refer to routes by name (`Redirect::to_route("dashboard")`), not by path.
 - Files copied by `art publish` are app code: edit them freely; upgrading a crate never touches them.
 - After changing Rust code, run `cargo check`; after changing page props, `art dev` re-exports the types.

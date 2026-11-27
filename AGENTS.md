@@ -36,7 +36,7 @@ Smoke-test `art new` and `art publish` output by scaffolding outside the workspa
 
 - `route`: `Router<S>` collects routes, groups and layers; `build(state)` composes each route's tower layers once (first added = outermost) and freezes into `Routes`. Handlers are `fn(I)` or `fn(Cx<S>, I)` with one `FromRequest` input; head-only inputs implement `FromRequestParts`, which lets them sit in tuple inputs.
 - Layers find types from other crates in request extensions: the session layer inserts `Session`; csrf reads a `TokenStore`; `auth::layer` inserts the provider; route inserts `Matched` and `UrlFor`. Order: session, csrf, auth, inertia.
-- `validate`: `Valid<T>` only via `Valid::check`; with feature `route`, `Errors` is a `422` response.
+- `validate`: `Valid<T>` only via `Valid::check`; rules are `Rule<T>` values, attached by `#[derive(Validate)]` (crate `validate-derive`, default feature `derive`); with feature `route`, `Errors` is a `422` response.
 - `art make:*` writes one file and appends one `pub mod` line; `art new` templates go through `.replace("{name}", ..)`.
 - Known rustc HRTB `Send` issue: a generic service projection naming `Request<route::Body>` fails `Send`; make layers generic over the request body.
 

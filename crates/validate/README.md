@@ -1,7 +1,8 @@
 # validate
 
 Validate input and prove it with `Valid<T>`: a value that exists only if every
-rule passed. All rules run; errors are collected per field.
+rule passed. Rules are attributes on the struct; errors are collected per field,
+keyed the way the client named them.
 
 ```toml
 [dependencies]
@@ -9,16 +10,17 @@ validate = { git = "https://github.com/projectlighthouse-io/toolkit", features =
 ```
 
 ```rust
-use validate::{Errors, Valid, Validate, email, max_len, required};
+use serde::Deserialize;
+use validate::{Valid, Validate};
 
-#[derive(serde::Deserialize)]
-struct CreateUser { name: String, email: String }
-
-impl Validate for CreateUser {
-    fn validate(&self, e: &mut Errors) {
-        e.check("name", required(&self.name)).check("name", max_len(&self.name, 80));
-        e.check("email", email(&self.email));
-    }
+#[derive(Deserialize, Validate)]
+struct CreateUser {
+    #[validate(required, max = 80)]
+    name: String,
+    #[validate(required, email)]
+    email: String,
+    #[validate(nullable, url)]
+    website: Option<String>,
 }
 
 // feature `route`: invalid input is a 422 with every error, before the handler runs
@@ -32,39 +34,56 @@ A failed request gets:
 ```
 
 With `inertia` (feature `validate`), Inertia visits are redirected back and the
-next page gets `props.errors` instead.
+next page gets `props.errors` instead. Each field reports its first failure.
 
 ## Rules
 
-| Kind | Rules |
+| Attribute | Checks |
 | --- | --- |
-| Presence, length | `required`, `min_len`, `max_len`, `exact_len`, `min_items`, `max_items` |
-| Numbers | `between`, `at_least`, `at_most`, `integer`, `numeric` |
-| Choices, comparisons | `one_of`, `not_one_of`, `same`, `different`, `accepted` |
-| Characters | `alpha`, `alpha_num`, `alpha_dash`, `lowercase`, `uppercase`, `starts_with`, `ends_with` |
-| Formats | `email`, `url`, `uuid`, `ip`, `ipv4`, `ipv6`, `date` (`YYYY-MM-DD`) |
+| `required` | Text not blank, list not empty, `Option` is `Some` |
+| `nullable` | Documents an `Option` field: `None` passes |
+| `min = n`, `max = n`, `between(a, b)` | Characters for text, items for lists, the value for numbers |
+| `email`, `url`, `uuid`, `date` | Text shapes |
+| `integer`, `numeric` | Numbers written as text |
+| `one_of("a", "b")` | One of a fixed set |
+| `same = other_field` | Equal to another field (password confirmation) |
+| `accepted` | `true` |
+| `rule = MyRule` | Your own `Rule` |
+| `with = function` | `fn(&Self, &Field) -> Result<(), Message>`, for rules that read other fields |
 
-## Custom rules
+Error keys follow `#[serde(rename)]` and `#[serde(rename_all)]`.
 
-A rule is any function returning `Result<(), Message>`:
+## Your own rules
 
 ```rust
-fn repo_slug(s: &str) -> Result<(), Message> {
-    rule(s.split('/').count() == 2, "Must look like owner/name.")
+struct RepoSlug;
+
+impl Rule<str> for RepoSlug {
+    fn name(&self) -> &str { "repo_slug" }
+    fn check(&self, value: &str) -> Result<(), Message> {
+        rule(value.split_once('/').is_some(), "Use owner/name.")
+    }
 }
 
-e.check("repo", repo_slug(&self.repo));                                  // own rule
-e.check("name", required(&self.name).or_message("Tell us your name.")); // own message
-e.check("confirm", same(&self.password, &self.confirm));                 // cross-field
-e.check("bio", nullable(self.bio.as_deref(), |b| max_len(b, 500)));      // optional field
-e.check(&format!("tags.{i}"), required(tag));                            // per item
+#[derive(Deserialize, Validate)]
+#[validate(with = cross_checks, messages = messages)]
+struct NewPipeline {
+    #[validate(required, rule = RepoSlug)]
+    repo: String,
+}
+
+fn cross_checks(p: &NewPipeline, e: &mut Errors) { /* e.field("x", &p.x).rule(min(1)) */ }
+fn messages() -> Messages { Messages::new().set("repo.repo_slug", "Which repository?") }
 ```
 
-Database checks ("email is taken") belong in an action; report them with
-`Errors::add`. Full guide: the crate docs (`cargo doc -p validate --open`).
+`#[validate(with = f)]` on the struct runs after the field rules and can report
+on any field. `messages = f` rewords rules by `field.rule`. Checks that need the
+database ("email is taken") or the logged-in user belong in the handler, after
+`Valid<T>`; report them with `Errors::add`. Full guide: `cargo doc -p validate --open`.
 
 ## Features
 
 | Feature | Adds |
 | --- | --- |
+| `derive` (default) | `#[derive(Validate)]` |
 | `route` | `Valid<Form\|Json\|Query\|Path<T>>` as handler inputs; `Errors` as a 422 response |
