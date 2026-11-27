@@ -22,6 +22,10 @@ art dev
 | `make:middleware`, `make:job`, `make:event [--listener]`, `make:command` | Stubs |
 | `publish <package> [--driver sqlite\|mysql] [--with-ui]` | Copy a package's stubs into the app; `--with-ui` adds its Inertia pages (`--list`, `--force`) |
 | `key:generate` | A fresh `APP_KEY` |
+
+`art new` also writes `AGENTS.md` (read by Codex, Cursor and others) and a `CLAUDE.md` that imports it:
+the app's layout, commands and rules, with links to the docs as Markdown. `art publish <crate>`
+appends that crate's notes to it.
 | `ssr` | Run the Inertia SSR server from `art build`; set `INERTIA_SSR_URL=http://127.0.0.1:13714` |
 | anything else | `cargo run -- …`: `route:list`, `queue:work`, `event:list`, `config:show`, … |
 

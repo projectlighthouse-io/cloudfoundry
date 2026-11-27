@@ -56,12 +56,17 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         .replace("{queue}", &source.dep("queue"))
         .replace("{event}", &source.dep("event"))
         .replace("{sse}", &source.dep("sse"));
+    let flag = if driver == "postgres" { String::new() } else { format!(" --driver {driver}") };
+    let agents = AGENTS.replace("{driver}", driver).replace("{flag}", &flag);
     let url = database_url(driver, name);
     let env_example = format!("APP_NAME={name}\nAPP_KEY=\nDATABASE_URL={url}\n");
     let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL={url}\n", crate::generate_key());
 
     let files: &[(&str, &str)] = &[
         ("Cargo.toml", &cargo_toml),
+        ("AGENTS.md", &agents),
+        // Claude Code reads CLAUDE.md; it imports AGENTS.md so both stay one file.
+        ("CLAUDE.md", "@AGENTS.md\n"),
         (".gitignore", "/target\n.env\n/node_modules\n/public/build\n/public/hot\n/bootstrap/ssr\n/*.db*\n"),
         (".env.example", &env_example),
         (".env", &env),
@@ -97,12 +102,66 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         fs::write(&file, contents).map_err(|e| format!("{}: {e}", file.display()))?;
     }
 
-    let flag = if driver == "postgres" { String::new() } else { format!(" --driver {driver}") };
     println!(
         "Created {name}.\n\n  cd {name}\n  # check DATABASE_URL in .env\n  npm install\n  art publish session{flag}   # sessions table migration\n  art publish queue{flag}     # jobs tables migration\n  art migrate\n  art dev"
     );
     Ok(())
 }
+
+/// Instructions for coding agents (Codex, Cursor, Claude Code via CLAUDE.md).
+/// `art publish` appends each module's notes.
+const AGENTS: &str = r#"# {name}
+
+A Rust web app on the toolkit crates (https://toolkit.projectlighthouse.io): Inertia + Vue
+frontend, {driver} database, `art` CLI. Read this before changing code.
+
+## Docs
+
+The toolkit docs are written for agents too. Read the page for a crate before using it:
+
+- Overview and every page as Markdown: https://toolkit.projectlighthouse.io/llms.txt
+- One crate: https://toolkit.projectlighthouse.io/docs/crates/<crate>.md (modules such as
+  `auth`, `password`, `socialite`: `/docs/modules/<module>.md`)
+- Everything in one file: https://toolkit.projectlighthouse.io/llms-full.txt
+
+The crates are beta (`0.x`) and come from git, not crates.io; `Cargo.lock` pins the commit.
+Trust the docs over memory: these crates are not in most training data.
+
+## Layout
+
+| Path | What |
+| --- | --- |
+| `src/main.rs` | Wiring: config, database, layers (session, CSRF, auth, Inertia), routes, commands |
+| `src/routes.rs` | Every route, with names; `art route:list` prints them |
+| `src/handlers/` | Async functions: one input (`Cx<App>` plus a tuple of inputs), one output |
+| `src/requests/` | Input structs and their `Validate` rules |
+| `src/responses/` | Page props (`Serialize` + `ts_rs::TS`); types land in `resources/js/types/` |
+| `src/actions/`, `src/jobs/`, `src/events/`, `src/commands/`, `src/middleware/` | Units of work, queued jobs, events, CLI commands, tower layers |
+| `migrations/` | sqlx migrations |
+| `resources/js/pages/` | Vue pages, rendered by Inertia |
+
+## Commands
+
+| Command | Use |
+| --- | --- |
+| `art dev` | Run the app, Vite and the type export, restarting on change |
+| `art make:handler <name>` (also `action`, `request`, `response`, `job`, `event`, `command`, `middleware`, `migration`) | Create one file and its `mod` line; prefer these to writing files by hand |
+| `art make:page <path>` | Props struct, Vue page and its TypeScript type |
+| `art publish <crate>{flag}` | Copy a module's handlers, migrations and pages into the app (`--with-ui` for Inertia pages) |
+| `art migrate` / `art migrate:rollback` | Apply or revert migrations |
+| `art route:list` | Every route, method and name |
+| `art build` | Production build |
+
+## Rules
+
+- No framework: handlers are plain async functions, middleware is `tower` layers in `main.rs`,
+  data access is `sqlx` queries in your code. There is no ORM, controller or template layer.
+- Layer order matters: session, then CSRF, then auth, then Inertia (first added is outermost).
+- Validate input with `Valid<Json<T>>` / `Valid<Form<T>>` and a `Validate` impl in `src/requests/`.
+- Refer to routes by name (`Redirect::to_route("dashboard")`), not by path.
+- Files copied by `art publish` are app code: edit them freely; upgrading a crate never touches them.
+- After changing Rust code, run `cargo check`; after changing page props, `art dev` re-exports the types.
+"#;
 
 const CARGO_TOML: &str = r#"[package]
 name = "{name}"
