@@ -2275,8 +2275,12 @@ name = "throttle"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "http-body-util",
+ "route",
  "sqlx",
  "tokio",
+ "tower",
+ "tracing",
 ]
 
 [[package]]

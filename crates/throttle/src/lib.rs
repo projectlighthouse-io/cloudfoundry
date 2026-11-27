@@ -21,6 +21,8 @@
 //! github.wait("api").await?;
 //! # Ok(()) }
 //! ```
+//!
+//! With the `route` feature, [`layer`] is the same limit as route middleware.
 
 use std::{
     collections::HashMap,
@@ -33,6 +35,10 @@ mod algorithms;
 pub use algorithms::{FixedWindow, SlidingWindow, TokenBucket};
 #[cfg(feature = "command")]
 pub mod command;
+#[cfg(feature = "route")]
+mod layer;
+#[cfg(feature = "route")]
+pub use layer::{Throttle, ThrottleService, by_ip, layer};
 #[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
 mod sql;
 #[cfg(feature = "mysql")]
