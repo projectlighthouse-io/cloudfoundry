@@ -78,3 +78,32 @@ impl auth::Remember for Users {
         Ok(())
     }
 }
+
+/// API tokens: enable with `.tokens()` on the auth layer, issue with
+/// `auth::issue_token(&users, &user, "cli", Some(ttl))`.
+impl auth::Tokens for Users {
+    async fn by_token_hash(&self, hash: &str) -> Result<Option<(User, Option<i64>)>, auth::Error> {
+        let row: Option<(i64, Option<i64>)> = sqlx::query_as("select user_id, expires_at from api_tokens where token_hash = ?")
+            .bind(hash)
+            .fetch_optional(self.db.pool())
+            .await?;
+        let Some((id, expires_at)) = row else { return Ok(None) };
+        Ok(auth::Provider::find(self, id).await?.map(|user| (user, expires_at)))
+    }
+
+    async fn store_token(&self, id: i64, token: auth::NewToken) -> Result<(), auth::Error> {
+        sqlx::query("insert into api_tokens (user_id, name, token_hash, expires_at) values (?, ?, ?, ?)")
+            .bind(id)
+            .bind(token.name)
+            .bind(token.hash)
+            .bind(token.expires_at)
+            .execute(self.db.pool())
+            .await?;
+        Ok(())
+    }
+
+    async fn delete_token(&self, hash: &str) -> Result<(), auth::Error> {
+        sqlx::query("delete from api_tokens where token_hash = ?").bind(hash).execute(self.db.pool()).await?;
+        Ok(())
+    }
+}

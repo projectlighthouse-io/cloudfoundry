@@ -7,7 +7,8 @@
 //! - [`Auth<U>`]: optional user, plus `login` and `logout`.
 //! - [`require`] / [`guest`]: layers for routes whose handlers take neither.
 //! - [`Remember`] + `.remember(codec)`: "remember me" cookies.
-//! - [`Tokens`] + `.tokens()`: `Authorization: Bearer` for APIs.
+//! - [`Tokens`] + `.tokens()`: `Authorization: Bearer` for APIs, with
+//!   [`issue_token`] / [`revoke_token`]. Tokens can expire.
 //! - [`Credentials`] + [`Auth::attempt`]: check a login and password, rehash
 //!   old hashes, log in. With feature `throttle`, `.throttle(limiter)` limits
 //!   failed attempts per login and IP.
@@ -84,9 +85,50 @@ pub trait Remember: Provider {
     fn set_remember_token(&self, id: Self::Id, token: Option<String>) -> impl Future<Output = Result<(), Error>> + Send;
 }
 
-/// Providers that can find a user by API token, for `Authorization: Bearer`.
+/// Providers that keep API tokens, for `Authorization: Bearer`. Only a
+/// SHA-256 hash of each token is stored ([`hash_token`]); the plain token is
+/// shown to its owner once, by [`issue_token`].
 pub trait Tokens: Provider {
-    fn by_token(&self, token: &str) -> impl Future<Output = Result<Option<Self::User>, Error>> + Send;
+    /// The owner of the token whose hash is `hash`, and when the token expires
+    /// (unix seconds; `None` for never).
+    fn by_token_hash(&self, hash: &str) -> impl Future<Output = Result<Option<(Self::User, Option<i64>)>, Error>> + Send;
+    /// Keep a new token for the user with `id`.
+    fn store_token(&self, id: Self::Id, token: NewToken) -> impl Future<Output = Result<(), Error>> + Send;
+    /// Forget the token whose hash is `hash`.
+    fn delete_token(&self, hash: &str) -> impl Future<Output = Result<(), Error>> + Send;
+}
+
+/// A token to store: its name (e.g. the device), hash and expiry.
+#[derive(Clone, Debug)]
+pub struct NewToken {
+    pub name: String,
+    pub hash: String,
+    /// Unix seconds; `None` for a token that does not expire.
+    pub expires_at: Option<i64>,
+}
+
+/// Issue an API token for `user`, valid for `ttl` (`None`: until revoked).
+/// Returns the plain token: show it once; only its hash is stored.
+pub async fn issue_token<P: Tokens>(users: &P, user: &P::User, name: &str, ttl: Option<Duration>) -> Result<String, Error> {
+    let token = random_token();
+    let expires_at = ttl.map(|ttl| unix_now() + ttl.as_secs() as i64);
+    users.store_token(users.id(user), NewToken { name: name.to_owned(), hash: hash_token(&token), expires_at }).await?;
+    Ok(token)
+}
+
+/// Revoke a plain token, e.g. the request's own ([`Auth::bearer_token`]) on API logout.
+pub async fn revoke_token<P: Tokens>(users: &P, token: &str) -> Result<(), Error> {
+    users.delete_token(&hash_token(token)).await
+}
+
+/// SHA-256 of `token`, lowercase hex: what [`Tokens`] stores and looks up.
+pub fn hash_token(token: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).expect("clock after 1970").as_secs() as i64
 }
 
 /// Providers that can check a password, for [`Auth::attempt`].
@@ -166,7 +208,10 @@ trait ErasedTokens<U>: Send + Sync {
 
 impl<P: Tokens> ErasedTokens<P::User> for P {
     fn by_token<'a>(&'a self, token: &'a str) -> BoxFuture<'a, Result<Option<P::User>, Error>> {
-        Box::pin(Tokens::by_token(self, token))
+        Box::pin(async move {
+            let found = self.by_token_hash(&hash_token(token)).await?;
+            Ok(found.filter(|(_, exp)| exp.is_none_or(|exp| exp > unix_now())).map(|(user, _)| user))
+        })
     }
 }
 
@@ -411,8 +456,9 @@ impl<P: Remember> AuthLayer<P> {
 
 impl<P: Tokens> AuthLayer<P> {
     /// Accept `Authorization: Bearer <token>`. A bearer request is
-    /// authenticated by the token alone; the session is not consulted. Exempt
-    /// such API routes from CSRF, which guards cookie-based requests.
+    /// authenticated by the token alone; the session is not consulted, and an
+    /// expired token is no token. Exempt such API routes from CSRF, which
+    /// guards cookie-based requests.
     pub fn tokens(mut self) -> Self {
         let tokens: Arc<dyn ErasedTokens<P::User>> = self.provider.clone();
         self.tokens = Some(tokens);
@@ -529,6 +575,11 @@ pub struct Auth<U> {
 impl<U> Auth<U> {
     pub fn user(&self) -> Option<&U> {
         self.user.as_ref()
+    }
+
+    /// The `Authorization: Bearer` token of this request (with `.tokens()`).
+    pub fn bearer_token(&self) -> Option<&str> {
+        self.cx.bearer.as_deref()
     }
 
     /// Log `user` in. Regenerates the session id.

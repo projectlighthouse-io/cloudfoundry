@@ -31,8 +31,11 @@ logs in. With feature `throttle`, `.throttle(limiter)` on the layer limits faile
 login and IP (`Limiter::memory(FixedWindow::new(5, Duration::from_secs(60)))` is Laravel's default).
 
 "Remember me": implement `auth::Remember` and add `.remember(codec)`; then
-`auth.login_remember(&user)`. API tokens: implement `auth::Tokens` and add
-`.tokens()`; `Authorization: Bearer` requests are authenticated without a session.
+`auth.login_remember(&user)`. API tokens: implement `auth::Tokens` (find by
+hash, store, delete) and add `.tokens()`; `Authorization: Bearer` requests are authenticated
+without a session. `auth::issue_token(&users, &user, "cli", Some(ttl))` returns the plain token
+once and stores only its SHA-256 hash; expired tokens are rejected; `auth::revoke_token(&users,
+auth.bearer_token().unwrap())` logs an API client out.
 
 `art publish auth [--driver sqlite|mysql]` copies login handlers, the login page, a `users` migration and a
 `Provider` into the app, to own and edit.

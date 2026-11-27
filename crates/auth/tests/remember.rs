@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use auth::{Auth, Authed, Provider, Remember, Tokens};
+use auth::{Auth, Authed, NewToken, Provider, Remember, Tokens};
 use http_body_util::BodyExt;
 use route::{
     Router, Routes, empty,
@@ -21,6 +21,8 @@ struct User {
 #[derive(Clone, Default)]
 struct Users {
     remember: Arc<Mutex<HashMap<u32, String>>>,
+    /// hash -> (user id, token)
+    tokens: Arc<Mutex<HashMap<String, (u32, NewToken)>>>,
 }
 
 impl Provider for Users {
@@ -49,8 +51,17 @@ impl Remember for Users {
 }
 
 impl Tokens for Users {
-    async fn by_token(&self, token: &str) -> Result<Option<User>, auth::Error> {
-        Ok((token == "api-secret").then_some(User { id: 1, name: "ada" }))
+    async fn by_token_hash(&self, hash: &str) -> Result<Option<(User, Option<i64>)>, auth::Error> {
+        let t = self.tokens.lock().unwrap().get(hash).cloned();
+        Ok(t.map(|(_, t)| (User { id: 1, name: "ada" }, t.expires_at)))
+    }
+    async fn store_token(&self, id: u32, token: NewToken) -> Result<(), auth::Error> {
+        self.tokens.lock().unwrap().insert(token.hash.clone(), (id, token));
+        Ok(())
+    }
+    async fn delete_token(&self, hash: &str) -> Result<(), auth::Error> {
+        self.tokens.lock().unwrap().remove(hash);
+        Ok(())
     }
 }
 
@@ -66,6 +77,14 @@ fn app(users: Users) -> Routes {
         "out"
     });
     r.get("/me", |u: Authed<User>| async move { u.name });
+    let u = users.clone();
+    r.post("/api/logout", move |auth: Auth<User>| {
+        let u = u.clone();
+        async move {
+            auth::revoke_token(&u, auth.bearer_token().unwrap()).await.unwrap();
+            "revoked"
+        }
+    });
     r.layer(session::layer(MemoryStore::new(), codec())).layer(auth::layer(users).remember(codec()).tokens());
     r.build(()).unwrap()
 }
@@ -117,11 +136,39 @@ async fn remember_me_survives_the_session_and_dies_on_logout() {
     assert_eq!(named(&set, "remember").map(String::as_str), Some("remember="));
 }
 
+fn bearer(token: &str) -> Option<(&'static str, &'static str)> {
+    Some(("authorization", String::leak(format!("Bearer {token}"))))
+}
+
 #[tokio::test]
 async fn bearer_tokens() {
-    let r = app(Users::default());
-    let (status, body, set) = send(&r, Method::GET, "/me", &[], Some(("authorization", "Bearer api-secret"))).await;
+    let users = Users::default();
+    let r = app(users.clone());
+    let ada = User { id: 1, name: "ada" };
+    let token = auth::issue_token(&users, &ada, "cli", None).await.unwrap();
+    let stored = users.tokens.lock().unwrap().values().next().unwrap().1.clone();
+    assert_eq!((stored.name.as_str(), stored.expires_at), ("cli", None));
+    assert_eq!(stored.hash, auth::hash_token(&token));
+    assert_ne!(stored.hash, token, "only the hash is stored");
+
+    let (status, body, set) = send(&r, Method::GET, "/me", &[], bearer(&token)).await;
     assert_eq!((status, body.as_str()), (StatusCode::OK, "ada"));
     assert!(set.is_empty(), "no session for API calls");
-    assert_eq!(send(&r, Method::GET, "/me", &[], Some(("authorization", "Bearer nope"))).await.0, StatusCode::UNAUTHORIZED);
+    assert_eq!(send(&r, Method::GET, "/me", &[], bearer("nope")).await.0, StatusCode::UNAUTHORIZED);
+
+    assert_eq!(send(&r, Method::POST, "/api/logout", &[], bearer(&token)).await.1, "revoked");
+    assert_eq!(send(&r, Method::GET, "/me", &[], bearer(&token)).await.0, StatusCode::UNAUTHORIZED, "revoked token");
+}
+
+#[tokio::test]
+async fn expired_tokens_are_rejected() {
+    let users = Users::default();
+    let r = app(users.clone());
+    let ada = User { id: 1, name: "ada" };
+    let live = auth::issue_token(&users, &ada, "live", Some(std::time::Duration::from_secs(3600))).await.unwrap();
+    assert_eq!(send(&r, Method::GET, "/me", &[], bearer(&live)).await.1, "ada");
+
+    let old = "old-token";
+    users.tokens.lock().unwrap().insert(auth::hash_token(old), (1, NewToken { name: "old".into(), hash: auth::hash_token(old), expires_at: Some(1) }));
+    assert_eq!(send(&r, Method::GET, "/me", &[], bearer(old)).await.0, StatusCode::UNAUTHORIZED);
 }

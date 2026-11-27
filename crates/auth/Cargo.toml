@@ -13,6 +13,7 @@ route = { path = "../route" }
 serde = "1"
 securecookie = { path = "../securecookie" }
 serde_json = "1"
+sha2 = "0.10"
 session = { path = "../session", features = ["route"] }
 throttle = { path = "../throttle", optional = true }
 tokio = { version = "1", features = ["sync", "rt"] }
