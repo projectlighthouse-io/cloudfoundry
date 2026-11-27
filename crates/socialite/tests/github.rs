@@ -11,17 +11,27 @@ use socialite::{Callback, GitHub, Provider};
 /// Fake github.com and api.github.com on one local port.
 async fn fake_github() -> String {
     let mut r = Router::new();
-    r.post("/login/oauth/access_token", |_: ()| async { Json(TokenJson { access_token: "tok" }) });
+    // The token is the code, so a test picks which user:email grant it gets.
+    r.post("/login/oauth/access_token", |route::Form(f): route::Form<std::collections::HashMap<String, String>>| async move {
+        Json(serde_json::json!({ "access_token": f["code"] }))
+    });
     r.get("/user", |_: ()| async { Json(UserJson { id: 7, login: "octo" }) });
+    // Only the token "tok" was granted `user:email`.
+    r.get("/user/emails", |req: Request<route::Body>| async move {
+        let granted = req.headers().get(header::AUTHORIZATION).is_some_and(|v| v == "Bearer tok");
+        if granted {
+            Ok(Json(serde_json::json!([
+                { "email": "old@octo.dev", "primary": false, "verified": true },
+                { "email": "octo@octo.dev", "primary": true, "verified": true }
+            ])))
+        } else {
+            Err(route::http::StatusCode::NOT_FOUND)
+        }
+    });
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(route::serve(listener, r.build(()).unwrap()));
     base
-}
-
-#[derive(serde::Serialize)]
-struct TokenJson {
-    access_token: &'static str,
 }
 
 #[derive(serde::Serialize)]
@@ -36,7 +46,7 @@ async fn go(cx: Cx<GitHub>, session: Session) -> String {
 
 async fn back(cx: Cx<GitHub>, (session, Query(cb)): (Session, Query<Callback>)) -> String {
     match cx.user(&session, cb).await {
-        Ok(u) => format!("{} {}", u.login, u.token),
+        Ok(u) => format!("{} {} {} {:?}", u.login, u.token, u.email.unwrap_or_default(), u.email_verified),
         Err(e) => e.to_string(),
     }
 }
@@ -73,8 +83,11 @@ async fn github_login_checks_state_once() {
     assert!(url.starts_with(&format!("{base}/login/oauth/authorize?client_id=id")));
     let state = url.split("state=").nth(1).unwrap().to_owned();
 
-    assert_eq!(get(&r, &format!("/cb?code=c&state={state}"), cookie).await, "octo tok");
-    assert_eq!(get(&r, &format!("/cb?code=c&state={state}"), cookie).await, "oauth state mismatch", "state is single use");
+    assert_eq!(get(&r, &format!("/cb?code=tok&state={state}"), cookie).await, "octo tok octo@octo.dev Some(true)", "verified primary email from /user/emails");
+    assert_eq!(get(&r, &format!("/cb?code=tok&state={state}"), cookie).await, "oauth state mismatch", "state is single use");
+
+    let state = get(&r, "/go", cookie).await.split("state=").nth(1).unwrap().to_owned();
+    assert_eq!(get(&r, &format!("/cb?code=noscope&state={state}"), cookie).await, "octo noscope  None", "without user:email: no email, verification unknown");
 
     get(&r, "/go", cookie).await;
     assert_eq!(get(&r, "/cb?code=c&state=forged", cookie).await, "oauth state mismatch");

@@ -32,6 +32,7 @@ pub async fn callback(cx: Cx<App>, (auth, session, social): (Auth<User>, Session
             Redirect::to_route("home")
         }
         Err(SocialError::NoEmail) => failed("That provider does not share an email address. Log in first, then connect it."),
+        Err(SocialError::UnverifiedEmail) => failed("That provider has not verified your email address. Log in first, then connect it."),
         Err(SocialError::Db(e)) => {
             tracing::error!("social login: {e}");
             failed("Something went wrong. Please try again.")

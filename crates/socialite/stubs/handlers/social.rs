@@ -27,6 +27,7 @@ pub async fn callback(cx: Cx<App>, (auth, social): (Auth<User>, SocialCallback))
             Redirect::to(base)
         }
         Err(SocialError::NoEmail) => Redirect::to(format!("{base}/?social_error=no_email")),
+        Err(SocialError::UnverifiedEmail) => Redirect::to(format!("{base}/?social_error=unverified_email")),
         Err(SocialError::Db(e)) => {
             tracing::error!("social login: {e}");
             Redirect::to(format!("{base}/?social_error=server"))

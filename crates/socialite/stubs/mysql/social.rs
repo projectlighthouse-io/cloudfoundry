@@ -2,10 +2,15 @@
 //!
 //! How a provider's user becomes an app user. The policy: an account already
 //! linked to that provider account logs in; a logged-in user links it to
-//! themselves; otherwise the same email means the same account; otherwise a
-//! new account without a password is created.
+//! themselves; otherwise the same *verified* email means the same account;
+//! otherwise a new account without a password is created.
 
 use socialite::SocialUser;
+
+/// Link or create accounts by email even when the provider does not vouch
+/// for it. Leave this `false`: with `true`, anyone who can get a provider to
+/// report your users' email addresses, unverified, can sign in as them.
+pub const TRUST_UNVERIFIED_EMAILS: bool = false;
 
 use crate::users::{User, Users};
 
@@ -14,6 +19,9 @@ use crate::users::{User, Users};
 pub enum SocialError {
     /// The provider shares no email (Reddit, X): log in first, then connect it.
     NoEmail,
+    /// The provider does not vouch for the email, so it cannot prove who this
+    /// is: log in first, then connect it.
+    UnverifiedEmail,
     Db(sqlx::Error),
 }
 
@@ -57,6 +65,10 @@ impl Users {
             return Ok(user.clone());
         }
         let email = social.email.as_deref().ok_or(SocialError::NoEmail)?;
+        // The guard: an email only identifies someone when the provider has verified it.
+        if social.email_verified != Some(true) && !TRUST_UNVERIFIED_EMAILS {
+            return Err(SocialError::UnverifiedEmail);
+        }
         let user = match self.by_email(email).await? {
             Some(user) => user,
             None => {

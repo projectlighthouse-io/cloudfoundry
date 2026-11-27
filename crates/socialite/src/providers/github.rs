@@ -14,9 +14,13 @@ pub struct GitHubUser {
     pub id: u64,
     pub login: String,
     pub name: Option<String>,
-    /// The public profile email; `None` if the user hides it.
-    /// ponytail: add a `/user/emails` lookup (scope `user:email`) when the app needs a private email.
+    /// The verified primary email when the `user:email` scope was granted,
+    /// otherwise the public profile email (`None` if the user hides it).
     pub email: Option<String>,
+    /// `Some(true)` for the verified primary email, `Some(false)` when GitHub
+    /// lists no verified primary email, `None` without the `user:email` scope.
+    #[serde(skip)]
+    pub email_verified: Option<bool>,
     pub avatar_url: Option<String>,
     /// Access token, for calling the GitHub API on the user's behalf.
     #[serde(skip)]
@@ -66,6 +70,29 @@ impl Provider for GitHub {
             .error_for_status()?
             .json()
             .await?;
+        #[derive(Deserialize)]
+        struct Email {
+            email: String,
+            primary: bool,
+            verified: bool,
+        }
+        // Needs the `user:email` scope; without it GitHub answers 403/404 and we
+        // keep the profile email, unverified-unknown.
+        let emails = self
+            .oauth
+            .http
+            .get(format!("{}/user/emails", self.api))
+            .bearer_auth(&token.access_token)
+            .header("accept", "application/vnd.github+json")
+            .send()
+            .await?;
+        if emails.status().is_success() {
+            let emails: Vec<Email> = emails.json().await?;
+            match emails.into_iter().find(|e| e.primary && e.verified) {
+                Some(e) => (user.email, user.email_verified) = (Some(e.email), Some(true)),
+                None => user.email_verified = Some(false),
+            }
+        }
         user.token = token.access_token;
         Ok(user)
     }
@@ -78,8 +105,7 @@ impl From<GitHubUser> for SocialUser {
             id: u.id.to_string(),
             name: u.name.or(Some(u.login)),
             email: u.email,
-            // GitHub's public profile email carries no verified flag.
-            email_verified: None,
+            email_verified: u.email_verified,
             avatar: u.avatar_url,
             token: u.token,
             refresh_token: None,

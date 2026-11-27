@@ -44,9 +44,15 @@ With feature `route`, `socialite::routes(&mut r, google, handlers::social::callb
 `art publish socialite [--driver sqlite|mysql] [--with-ui]` (after `art publish auth`) copies:
 
 - `src/social.rs`: `Users::find_or_create_social`. An account already linked to the provider account
-  logs in; a logged-in user gets it linked; otherwise the same email is the same account; otherwise a
-  new account without a password is created. Providers without email (Reddit, X) can only be
-  connected by a logged-in user.
+  logs in; a logged-in user gets it linked; otherwise the same **verified** email is the same account;
+  otherwise a new account without a password is created. Without a verified email (Reddit, X, or a
+  provider that did not verify it) the provider can only be connected by a logged-in user.
+
+> [!WARNING]
+> Linking by an email the provider has not verified lets anyone who registers your user's address
+> with that provider sign in as them. `src/social.rs` only links or creates by verified email; keep
+> `TRUST_UNVERIFIED_EMAILS = false`. For GitHub, request the `user:email` scope so its verified
+> primary email can be read.
 - `src/handlers/social.rs`: the callback (JSON apps redirect to `APP_URL`; `--with-ui` shows errors on
   the login page) and, with `--with-ui`, `SocialButtons.vue`.
 - Migrations: `social_accounts`, and `users.password_hash` made nullable (on SQLite by rebuilding the
