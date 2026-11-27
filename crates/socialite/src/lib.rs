@@ -14,6 +14,8 @@
 //! | `oidc` | `Oidc`: any OpenID Connect provider, by discovery or explicit endpoints |
 //! | `auth0` | `Auth0` (implies `oidc`) |
 //!
+//! Feature `route` adds [`routes`]: `GET /auth/{name}` and its callback.
+//!
 //! ```ignore
 //! use socialite::Provider;
 //!
@@ -41,6 +43,10 @@ use session::Session;
 use sha2::{Digest, Sha256};
 
 mod providers;
+#[cfg(feature = "route")]
+mod route;
+#[cfg(feature = "route")]
+pub use route::{SocialCallback, routes};
 #[allow(unused_imports)] // empty when no provider feature is on
 pub use providers::*;
 

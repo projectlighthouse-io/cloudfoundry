@@ -14,6 +14,7 @@ serde_urlencoded = "0.7"
 session = { path = "../session" }
 sha2 = "0.10"
 serde_json = { version = "1", optional = true }
+route = { path = "../route", optional = true }
 
 [features]
 # One feature per provider; enable only what the app uses.
@@ -25,6 +26,8 @@ twitter = []
 # Any OpenID Connect provider (discovery or explicit endpoints).
 oidc = ["dep:serde_json"]
 auth0 = ["oidc"]
+# `socialite::routes(r, provider, callback)` and the `SocialCallback` input.
+route = ["dep:route", "session/route"]
 
 [dev-dependencies]
 base64 = "0.22"
