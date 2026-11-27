@@ -25,4 +25,4 @@ Queries stay plain `sqlx`. A `Db<Analytics>` where `Db<Primary>` is expected doe
 | Feature | Adds |
 | --- | --- |
 | `postgres`, `mysql`, `sqlite` | The `sqlx` driver |
-| `singleton` | `Db::<H>::set_singleton` / `singleton()`: one process-wide slot per handle |
+| `singleton` | `Db::<H>::set_singleton` / `singleton()`: one process-wide slot per handle; both return `Result<_, SingletonError>` |

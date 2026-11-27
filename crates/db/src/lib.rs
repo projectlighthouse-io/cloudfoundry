@@ -97,18 +97,39 @@ impl<H: Handle> Db<H> {
     }
 }
 
+/// Why a singleton call failed; it names the handle.
 #[cfg(feature = "singleton")]
-impl<H: Handle> Db<H> {
-    /// Fill the process-wide slot for `H`. Call once at startup.
-    /// Panics if it was already set.
-    pub fn set_singleton(db: Self) {
-        if H::__slot().set(db).is_err() {
-            panic!("db singleton for `{}` is already set", H::NAME);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SingletonError {
+    /// `set_singleton` ran twice for this handle.
+    AlreadySet(&'static str),
+    /// `singleton()` ran before `set_singleton`.
+    NotSet(&'static str),
+}
+
+#[cfg(feature = "singleton")]
+impl fmt::Display for SingletonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AlreadySet(h) => write!(f, "db singleton for `{h}` is already set"),
+            Self::NotSet(h) => write!(f, "db singleton for `{h}` was never set; call Db::set_singleton at startup"),
         }
     }
+}
 
-    /// The handle stored by `set_singleton`. Panics if it was never set.
-    pub fn singleton() -> &'static Self {
-        H::__slot().get().unwrap_or_else(|| panic!("db singleton for `{}` was never set", H::NAME))
+#[cfg(feature = "singleton")]
+impl std::error::Error for SingletonError {}
+
+#[cfg(feature = "singleton")]
+impl<H: Handle> Db<H> {
+    /// Fill the process-wide slot for `H`. Call once at startup; a second call
+    /// returns [`SingletonError::AlreadySet`] and keeps the first handle.
+    pub fn set_singleton(db: Self) -> Result<(), SingletonError> {
+        H::__slot().set(db).map_err(|_| SingletonError::AlreadySet(H::NAME))
+    }
+
+    /// The handle stored by `set_singleton`, or [`SingletonError::NotSet`].
+    pub fn singleton() -> Result<&'static Self, SingletonError> {
+        H::__slot().get().ok_or(SingletonError::NotSet(H::NAME))
     }
 }
