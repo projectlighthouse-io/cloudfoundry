@@ -1,6 +1,6 @@
 //! OAuth login with third-party providers.
 //!
-//! Each provider ([`GitHub`]) implements [`Provider`]: its
+//! Each provider ([`GitHub`], [`Google`]) implements [`Provider`]: its
 //! endpoints and how to fetch the user. The flow is shared:
 //!
 //! ```ignore
@@ -30,7 +30,7 @@ use session::Session;
 use sha2::{Digest, Sha256};
 
 mod providers;
-pub use providers::{GitHub, GitHubUser};
+pub use providers::{GitHub, GitHubUser, Google, GoogleUser};
 
 /// The query string the provider redirects back with.
 #[derive(Debug, Deserialize)]

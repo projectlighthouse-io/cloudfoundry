@@ -1944,6 +1944,7 @@ dependencies = [
  "route",
  "securecookie",
  "serde",
+ "serde_json",
  "serde_urlencoded",
  "session",
  "sha2",
