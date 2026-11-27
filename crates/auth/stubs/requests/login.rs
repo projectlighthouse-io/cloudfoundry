@@ -1,19 +1,14 @@
 //! Published by `art publish auth`. App code: change it freely.
 
 use serde::Deserialize;
-use validate::{Errors, Validate, email, required};
+use validate::Validate;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
 pub struct Login {
+    #[validate(required, email)]
     pub email: String,
+    #[validate(required)]
     pub password: String,
     #[serde(default)]
     pub remember: bool,
-}
-
-impl Validate for Login {
-    fn validate(&self, e: &mut Errors) {
-        e.check("email", required(&self.email)).check("email", email(&self.email));
-        e.check("password", required(&self.password));
-    }
 }

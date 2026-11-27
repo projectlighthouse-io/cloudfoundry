@@ -167,17 +167,15 @@ impl Action for {pascal} {
 "#;
 
 const REQUEST: &str = r#"use serde::Deserialize;
-use validate::{Errors, Validate, required};
+use validate::Validate;
 
-#[derive(Deserialize)]
+/// Take `Valid<Json<{pascal}>>` (or `Valid<Form<..>>`) in a handler; invalid
+/// input gets a 422 before the handler runs. Rules:
+/// https://toolkit.projectlighthouse.io/docs/crates/validate.md
+#[derive(Deserialize, Validate)]
 pub struct {pascal} {
+    #[validate(required, max = 255)]
     pub name: String,
-}
-
-impl Validate for {pascal} {
-    fn validate(&self, e: &mut Errors) {
-        e.check("name", required(&self.name));
-    }
 }
 "#;
 

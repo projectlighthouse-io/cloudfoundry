@@ -1,23 +1,23 @@
 //! Published by `art publish auth`. App code: change it freely.
 
 use serde::Deserialize;
-use validate::{Errors, OrMessage, Validate, email, max_len, min_len, nullable, required, same};
+use validate::{Messages, Validate};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Validate)]
+#[validate(messages = messages)]
 pub struct Register {
-    /// Optional. Make it required here if your app needs it.
+    /// Optional. Make it required here (`#[validate(required, max = 255)]`) if your app needs it.
     #[serde(default)]
+    #[validate(nullable, max = 255)]
     pub name: Option<String>,
+    #[validate(required, email, max = 191)]
     pub email: String,
+    #[validate(required, min = 8)]
     pub password: String,
+    #[validate(same = password)]
     pub password_confirmation: String,
 }
 
-impl Validate for Register {
-    fn validate(&self, e: &mut Errors) {
-        e.check("name", nullable(self.name.as_deref(), |n| max_len(n, 255)));
-        e.check("email", required(&self.email)).check("email", email(&self.email)).check("email", max_len(&self.email, 191));
-        e.check("password", min_len(&self.password, 8))
-            .check("password", same(&self.password_confirmation, &self.password).or_message("The password confirmation does not match."));
-    }
+fn messages() -> Messages {
+    Messages::new().set("password_confirmation.same", "The password confirmation does not match.")
 }

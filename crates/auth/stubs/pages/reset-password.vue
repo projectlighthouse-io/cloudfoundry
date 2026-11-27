@@ -26,6 +26,7 @@ const form = useForm({ token: props.token, email: props.email, password: '', pas
         Confirm password
         <input v-model="form.password_confirmation" type="password" autocomplete="new-password" required />
       </label>
+      <p v-if="form.errors.password_confirmation">{{ form.errors.password_confirmation }}</p>
 
       <button type="submit" :disabled="form.processing">Reset password</button>
     </form>

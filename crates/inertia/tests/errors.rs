@@ -17,7 +17,7 @@ struct New {
 
 impl Validate for New {
     fn validate(&self, e: &mut Errors) {
-        e.check("name", required(&self.name)).check("name", validate::min_len(&self.name, 3));
+        e.field("name", self.name.as_str()).rule(required()).rule(validate::min(3));
     }
 }
 

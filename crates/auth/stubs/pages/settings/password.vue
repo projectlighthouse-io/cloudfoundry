@@ -28,6 +28,7 @@ const submit = () => form.post('/settings/password', { onFinish: () => form.rese
         Confirm new password
         <input v-model="form.password_confirmation" type="password" autocomplete="new-password" required />
       </label>
+      <p v-if="form.errors.password_confirmation">{{ form.errors.password_confirmation }}</p>
 
       <button type="submit" :disabled="form.processing">Change password</button>
     </form>

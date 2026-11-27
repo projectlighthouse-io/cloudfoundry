@@ -30,6 +30,7 @@ const form = useForm({ name: '', email: '', password: '', password_confirmation:
         Confirm password
         <input v-model="form.password_confirmation" type="password" autocomplete="new-password" required />
       </label>
+      <p v-if="form.errors.password_confirmation">{{ form.errors.password_confirmation }}</p>
 
       <button type="submit" :disabled="form.processing">Register</button>
     </form>
