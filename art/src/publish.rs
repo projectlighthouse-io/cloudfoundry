@@ -58,9 +58,12 @@ pub fn run(package: &str, driver: Option<&str>, with_ui: bool, list: bool, force
         entries = with_ui_entries(entries, pairs(ui));
     }
 
-    let ts = next_version(&timestamp());
+    let versions = versions(&entries, &next_version(&timestamp()));
     for (from, to) in entries {
-        let dest = PathBuf::from(to.replace("{timestamp}", &ts));
+        let dest = PathBuf::from(match versions.iter().find(|(name, _)| *name == migration_name(to)) {
+            Some((_, v)) => to.replace("{timestamp}", v),
+            None => to.to_owned(),
+        });
         if list {
             println!("{from} -> {to}");
             continue;
@@ -96,6 +99,27 @@ fn with_ui_entries<'a>(mut entries: Vec<(&'a str, &'a str)>, ui: Vec<(&'a str, &
         }
     }
     entries
+}
+
+/// `migrations/{timestamp}_create_users.up.sql` -> `create_users`; up and down share it.
+fn migration_name(template: &str) -> &str {
+    let file = template.rsplit('/').next().unwrap_or(template);
+    let name = file.strip_prefix("{timestamp}_").unwrap_or(file);
+    name.trim_end_matches(".sql").trim_end_matches(".up").trim_end_matches(".down")
+}
+
+/// One version per migration (up and down share it), counting up from
+/// `first` in publish order, so a package can ship several migrations.
+fn versions<'a>(entries: &[(&str, &'a str)], first: &str) -> Vec<(&'a str, String)> {
+    let first: u64 = first.parse().unwrap_or(0);
+    let mut out: Vec<(&str, String)> = Vec::new();
+    for (_, to) in entries.iter().filter(|(_, to)| to.contains("{timestamp}")) {
+        let name = migration_name(to);
+        if !out.iter().any(|(n, _)| *n == name) {
+            out.push((name, (first + out.len() as u64).to_string()));
+        }
+    }
+    out
 }
 
 /// The existing file for `template`. A `{timestamp}` part matches any
@@ -158,6 +182,21 @@ mod tests {
                 ("stubs/users.rs", "src/users.rs"),
                 ("stubs/pages/login.vue", "resources/js/pages/auth/login.vue"),
             ]
+        );
+    }
+
+    #[test]
+    fn each_migration_gets_its_own_version() {
+        let entries = [
+            ("a", "migrations/{timestamp}_create_social_accounts.up.sql"),
+            ("b", "migrations/{timestamp}_create_social_accounts.down.sql"),
+            ("c", "src/social.rs"),
+            ("d", "migrations/{timestamp}_allow_null_passwords.up.sql"),
+            ("e", "migrations/{timestamp}_allow_null_passwords.down.sql"),
+        ];
+        assert_eq!(
+            super::versions(&entries, "20261127100000"),
+            [("create_social_accounts", "20261127100000".to_owned()), ("allow_null_passwords", "20261127100001".to_owned())]
         );
     }
 
