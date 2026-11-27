@@ -41,9 +41,9 @@ async fn check<S: Store<Role = TeamRole, OrgRole = OrgRole>>(t: Teams<S>) {
     // Invitations round-trip their typed target.
     let day = Duration::from_secs(86400);
     let new = t.invite(Target::Team { team: core.id, role: TeamRole::Member }, "cy@example.com", 1, day).await.unwrap();
-    assert_eq!(s.team_invitations(core.id).await.unwrap(), [new.invitation.clone()]);
+    assert_eq!(s.team_invitations(core.id).await.unwrap(), std::slice::from_ref(&new.invitation));
     let org_invite = t.invite(Target::Org { org: acme.id, role: OrgRole::Member }, "cy@example.com", 1, day).await.unwrap();
-    assert_eq!(s.org_invitations(acme.id).await.unwrap(), [org_invite.invitation.clone()]);
+    assert_eq!(s.org_invitations(acme.id).await.unwrap(), std::slice::from_ref(&org_invite.invitation));
     t.accept(&org_invite.token, 4, "cy@example.com").await.unwrap();
     t.accept(&new.token, 4, "cy@example.com").await.unwrap();
     assert_eq!(s.team_role(core.id, 4).await.unwrap(), Some(TeamRole::Member));

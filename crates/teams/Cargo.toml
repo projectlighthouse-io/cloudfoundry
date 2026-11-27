@@ -30,6 +30,7 @@ session = ["dep:session"]
 
 [dev-dependencies]
 http-body-util = "0.1"
+securecookie = { path = "../securecookie" }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 
 [package.metadata.art.publish]

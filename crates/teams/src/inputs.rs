@@ -96,7 +96,7 @@ impl<R, O> Clone for Gate<R, O> {
 }
 
 /// The team role's gate, by team role type only (what `Membership<R>` knows).
-pub(crate) struct TeamGate<R>(Arc<dyn TeamOnly<R>>);
+pub(crate) struct TeamGate<R>(pub(crate) Arc<dyn TeamOnly<R>>);
 /// The organization role's gate, by organization role type only.
 pub(crate) struct OrgGate<O>(Arc<dyn OrgOnly<O>>);
 
