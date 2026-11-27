@@ -1,12 +1,31 @@
-//! Built-in rules. Each is a plain function returning `Result<(), Message>`;
-//! an app's own rules are written the same way (see [`rule`]).
+//! The built-in rules, and the [`Rule`] trait for writing your own.
+//!
+//! Each rule is a small value: `required()`, `max(255)`, `one_of(["free", "pro"])`.
+//! Attach them with `#[validate(...)]` (feature `derive`) or, inside a
+//! hand-written check, with `e.field("name", &value).rule(max(255))`.
 
-use std::{fmt, net::IpAddr};
+use std::fmt;
 
 use crate::Message;
 
-fn check(ok: bool, message: impl FnOnce() -> Message) -> Result<(), Message> {
-    if ok { Ok(()) } else { Err(message()) }
+/// A validation rule for values of type `T`.
+///
+/// ```
+/// use validate::{Message, Rule, rule};
+///
+/// struct RepoSlug;
+///
+/// impl Rule<str> for RepoSlug {
+///     fn name(&self) -> &str { "repo_slug" }   // reworded in messages() as "<field>.repo_slug"
+///     fn check(&self, value: &str) -> Result<(), Message> {
+///         rule(value.split_once('/').is_some_and(|(o, n)| !o.is_empty() && !n.is_empty()), "Use owner/name.")
+///     }
+/// }
+/// ```
+pub trait Rule<T: ?Sized> {
+    /// The rule's key in [`Messages`](crate::Messages): `"<field>.<name>"`.
+    fn name(&self) -> &str;
+    fn check(&self, value: &T) -> Result<(), Message>;
 }
 
 /// A rule from a condition: `rule(input.starts_with('#'), "Must start with #.")`.
@@ -14,7 +33,7 @@ pub fn rule(ok: bool, message: impl Into<Message>) -> Result<(), Message> {
     if ok { Ok(()) } else { Err(message.into()) }
 }
 
-/// Override a rule's message: `required(&x).or_message("Tell us your name.")`.
+/// Replace a rule result's message: `check(...).or_message("Tell us your name.")`.
 pub trait OrMessage {
     fn or_message(self, message: impl Into<Message>) -> Self;
 }
@@ -25,285 +44,405 @@ impl OrMessage for Result<(), Message> {
     }
 }
 
-/// Run `rule` only when there is a value; `None` passes.
-/// `e.check("bio", nullable(self.bio.as_deref(), |b| max_len(b, 500)))`.
-pub fn nullable<T>(value: Option<T>, rule: impl FnOnce(T) -> Result<(), Message>) -> Result<(), Message> {
-    value.map_or(Ok(()), rule)
+/// Values `required` understands: text is present when it is not blank, a
+/// list when it is not empty, an `Option` when it is `Some` with a present value.
+pub trait Presence {
+    fn is_present(&self) -> bool;
 }
 
-// Presence and length.
-
-/// Not empty after trimming whitespace.
-pub fn required(s: &str) -> Result<(), Message> {
-    check(!s.trim().is_empty(), || "This field is required.".into())
+impl Presence for str {
+    fn is_present(&self) -> bool {
+        !self.trim().is_empty()
+    }
 }
 
-/// At least `min` characters.
-pub fn min_len(s: &str, min: usize) -> Result<(), Message> {
-    check(s.chars().count() >= min, || format!("Must be at least {min} characters.").into())
+impl Presence for String {
+    fn is_present(&self) -> bool {
+        self.as_str().is_present()
+    }
 }
 
-/// At most `max` characters.
-pub fn max_len(s: &str, max: usize) -> Result<(), Message> {
-    check(s.chars().count() <= max, || format!("Must be at most {max} characters.").into())
+impl<I> Presence for Vec<I> {
+    fn is_present(&self) -> bool {
+        !self.is_empty()
+    }
 }
 
-/// Exactly `len` characters.
-pub fn exact_len(s: &str, len: usize) -> Result<(), Message> {
-    check(s.chars().count() == len, || format!("Must be exactly {len} characters.").into())
+impl<I> Presence for [I] {
+    fn is_present(&self) -> bool {
+        !self.is_empty()
+    }
 }
 
-/// At least `min` items.
-pub fn min_items<T>(items: &[T], min: usize) -> Result<(), Message> {
-    check(items.len() >= min, || format!("Must have at least {min} items.").into())
+impl<T: Presence> Presence for Option<T> {
+    fn is_present(&self) -> bool {
+        self.as_ref().is_some_and(Presence::is_present)
+    }
 }
 
-/// At most `max` items.
-pub fn max_items<T>(items: &[T], max: usize) -> Result<(), Message> {
-    check(items.len() <= max, || format!("Must have at most {max} items.").into())
+/// What `min`, `max` and `between` compare: the length of text, the number of
+/// items in a list, or the value of a number.
+pub trait Measure {
+    fn measure(&self) -> (f64, Unit);
 }
 
-// Numbers.
-
-/// Within `min..=max`.
-pub fn between<N: PartialOrd + fmt::Display>(n: &N, min: N, max: N) -> Result<(), Message> {
-    check(*n >= min && *n <= max, || format!("Must be between {min} and {max}.").into())
+/// The unit a [`Measure`] is in, for messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unit {
+    Characters,
+    Items,
+    Value,
 }
 
-/// `min` or more.
-pub fn at_least<N: PartialOrd + fmt::Display>(n: &N, min: N) -> Result<(), Message> {
-    check(*n >= min, || format!("Must be at least {min}.").into())
+impl Measure for str {
+    fn measure(&self) -> (f64, Unit) {
+        (self.chars().count() as f64, Unit::Characters)
+    }
 }
 
-/// `max` or less.
-pub fn at_most<N: PartialOrd + fmt::Display>(n: &N, max: N) -> Result<(), Message> {
-    check(*n <= max, || format!("Must be at most {max}.").into())
+impl Measure for String {
+    fn measure(&self) -> (f64, Unit) {
+        self.as_str().measure()
+    }
 }
 
-/// Text that is a whole number, such as `-12`.
-pub fn integer(s: &str) -> Result<(), Message> {
-    check(s.trim().parse::<i64>().is_ok(), || "Must be a whole number.".into())
+impl<I> Measure for Vec<I> {
+    fn measure(&self) -> (f64, Unit) {
+        (self.len() as f64, Unit::Items)
+    }
 }
 
-/// Text that is a finite number, such as `3.5`.
-pub fn numeric(s: &str) -> Result<(), Message> {
-    check(s.trim().parse::<f64>().is_ok_and(f64::is_finite), || "Must be a number.".into())
+impl<I> Measure for [I] {
+    fn measure(&self) -> (f64, Unit) {
+        (self.len() as f64, Unit::Items)
+    }
 }
 
-// Choices and comparisons.
-
-/// One of `allowed`.
-pub fn one_of<T: PartialEq + ?Sized>(value: &T, allowed: &[&T]) -> Result<(), Message> {
-    check(allowed.contains(&value), || "Must be one of the allowed values.".into())
+/// Numbers that `min`, `max`, `between` and `one_of` accept.
+pub trait Number: Copy + PartialEq + fmt::Display {
+    fn as_f64(self) -> f64;
 }
 
-/// None of `forbidden`.
-pub fn not_one_of<T: PartialEq + ?Sized>(value: &T, forbidden: &[&T]) -> Result<(), Message> {
-    check(!forbidden.contains(&value), || "This value is not allowed.".into())
-}
-
-/// Equal to `other`, as for a password confirmation.
-pub fn same<T: PartialEq + ?Sized>(value: &T, other: &T) -> Result<(), Message> {
-    check(value == other, || "Must match.".into())
-}
-
-/// Different from `other`.
-pub fn different<T: PartialEq + ?Sized>(value: &T, other: &T) -> Result<(), Message> {
-    check(value != other, || "Must be different.".into())
-}
-
-/// Checked, as for accepting terms.
-pub fn accepted(value: bool) -> Result<(), Message> {
-    check(value, || "Must be accepted.".into())
-}
-
-// Character classes.
-
-/// Letters only (any script).
-pub fn alpha(s: &str) -> Result<(), Message> {
-    check(!s.is_empty() && s.chars().all(char::is_alphabetic), || "Must contain only letters.".into())
-}
-
-/// Letters and digits only.
-pub fn alpha_num(s: &str) -> Result<(), Message> {
-    check(!s.is_empty() && s.chars().all(char::is_alphanumeric), || "Must contain only letters and numbers.".into())
-}
-
-/// Letters, digits, `-` and `_`, as in a slug or username.
-pub fn alpha_dash(s: &str) -> Result<(), Message> {
-    let ok = !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_');
-    check(ok, || "Must contain only letters, numbers, dashes and underscores.".into())
-}
-
-/// No uppercase letters.
-pub fn lowercase(s: &str) -> Result<(), Message> {
-    check(!s.chars().any(char::is_uppercase), || "Must be lowercase.".into())
-}
-
-/// No lowercase letters.
-pub fn uppercase(s: &str) -> Result<(), Message> {
-    check(!s.chars().any(char::is_lowercase), || "Must be uppercase.".into())
-}
-
-pub fn starts_with(s: &str, prefix: &str) -> Result<(), Message> {
-    check(s.starts_with(prefix), || format!("Must start with {prefix}.").into())
-}
-
-pub fn ends_with(s: &str, suffix: &str) -> Result<(), Message> {
-    check(s.ends_with(suffix), || format!("Must end with {suffix}.").into())
-}
-
-// Formats.
-
-/// Shaped like an email address: one `@`, a non-empty local part, a dotted
-/// domain, no whitespace.
-/// ponytail: shape only; confirm ownership by sending mail, not by parsing.
-pub fn email(s: &str) -> Result<(), Message> {
-    let ok = match s.split_once('@') {
-        Some((local, domain)) => {
-            !local.is_empty()
-                && !domain.contains('@')
-                && domain.split('.').count() >= 2
-                && domain.split('.').all(|p| !p.is_empty())
-                && !s.chars().any(char::is_whitespace)
-        }
-        None => false,
-    };
-    check(ok, || "Must be a valid email address.".into())
-}
-
-/// An `http` or `https` URL with a host.
-/// ponytail: shape only; use the `url` crate in the app for strict parsing.
-pub fn url(s: &str) -> Result<(), Message> {
-    let rest = s.strip_prefix("https://").or_else(|| s.strip_prefix("http://"));
-    let host = rest.map(|r| r.split(['/', '?', '#']).next().unwrap_or(""));
-    let ok = host.is_some_and(|h| !h.is_empty() && !h.starts_with(':')) && !s.chars().any(char::is_whitespace);
-    check(ok, || "Must be a valid URL.".into())
-}
-
-/// A UUID in its 36-character hyphenated form.
-pub fn uuid(s: &str) -> Result<(), Message> {
-    let ok = s.len() == 36
-        && s.char_indices().all(|(i, c)| if matches!(i, 8 | 13 | 18 | 23) { c == '-' } else { c.is_ascii_hexdigit() });
-    check(ok, || "Must be a valid UUID.".into())
-}
-
-/// An IPv4 or IPv6 address.
-pub fn ip(s: &str) -> Result<(), Message> {
-    check(s.parse::<IpAddr>().is_ok(), || "Must be a valid IP address.".into())
-}
-
-pub fn ipv4(s: &str) -> Result<(), Message> {
-    check(s.parse::<std::net::Ipv4Addr>().is_ok(), || "Must be a valid IPv4 address.".into())
-}
-
-pub fn ipv6(s: &str) -> Result<(), Message> {
-    check(s.parse::<std::net::Ipv6Addr>().is_ok(), || "Must be a valid IPv6 address.".into())
-}
-
-/// A calendar date as `YYYY-MM-DD`, leap years included.
-pub fn date(s: &str) -> Result<(), Message> {
-    let parts: Vec<&str> = s.split('-').collect();
-    let ok = match parts.as_slice() {
-        [y, m, d] if y.len() == 4 && m.len() == 2 && d.len() == 2 => {
-            match (y.parse::<u32>(), m.parse::<u32>(), d.parse::<u32>()) {
-                (Ok(y), Ok(m), Ok(d)) => {
-                    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
-                    let days = match m {
-                        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-                        4 | 6 | 9 | 11 => 30,
-                        2 if leap => 29,
-                        2 => 28,
-                        _ => 0,
-                    };
-                    d >= 1 && d <= days
-                }
-                _ => false,
+macro_rules! numbers {
+    ($($t:ty),*) => {$(
+        impl Number for $t {
+            fn as_f64(self) -> f64 {
+                self as f64
             }
         }
-        _ => false,
+        impl Measure for $t {
+            fn measure(&self) -> (f64, Unit) {
+                (*self as f64, Unit::Value)
+            }
+        }
+    )*};
+}
+
+numbers!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize, f32, f64);
+
+fn show(n: f64) -> String {
+    if n.fract() == 0.0 { format!("{}", n as i64) } else { n.to_string() }
+}
+
+fn plural(n: f64, one: &str, many: &str) -> String {
+    format!("{} {}", show(n), if n == 1.0 { one } else { many })
+}
+
+/// Present: text that is not blank, a non-empty list, or `Some`.
+pub struct Required;
+
+pub fn required() -> Required {
+    Required
+}
+
+impl<T: Presence + ?Sized> Rule<T> for Required {
+    fn name(&self) -> &str {
+        "required"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        rule(value.is_present(), "This field is required.")
+    }
+}
+
+/// At least `n`: characters for text, items for lists, the value for numbers.
+pub struct Min(f64);
+
+pub fn min(n: impl Number) -> Min {
+    Min(n.as_f64())
+}
+
+impl<T: Measure + ?Sized> Rule<T> for Min {
+    fn name(&self) -> &str {
+        "min"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        let (v, unit) = value.measure();
+        rule(v >= self.0, match unit {
+            Unit::Characters => format!("Must be at least {}.", plural(self.0, "character", "characters")),
+            Unit::Items => format!("Must have at least {}.", plural(self.0, "item", "items")),
+            Unit::Value => format!("Must be at least {}.", show(self.0)),
+        })
+    }
+}
+
+/// At most `n`: characters for text, items for lists, the value for numbers.
+pub struct Max(f64);
+
+pub fn max(n: impl Number) -> Max {
+    Max(n.as_f64())
+}
+
+impl<T: Measure + ?Sized> Rule<T> for Max {
+    fn name(&self) -> &str {
+        "max"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        let (v, unit) = value.measure();
+        rule(v <= self.0, match unit {
+            Unit::Characters => format!("Must be at most {}.", plural(self.0, "character", "characters")),
+            Unit::Items => format!("Must have at most {}.", plural(self.0, "item", "items")),
+            Unit::Value => format!("Must be at most {}.", show(self.0)),
+        })
+    }
+}
+
+/// From `low` to `high`, inclusive, measured like [`min`] and [`max`].
+pub struct Between(f64, f64);
+
+pub fn between(low: impl Number, high: impl Number) -> Between {
+    Between(low.as_f64(), high.as_f64())
+}
+
+impl<T: Measure + ?Sized> Rule<T> for Between {
+    fn name(&self) -> &str {
+        "between"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        let (v, unit) = value.measure();
+        let (lo, hi) = (show(self.0), show(self.1));
+        rule((self.0..=self.1).contains(&v), match unit {
+            Unit::Characters => format!("Must be between {lo} and {hi} characters."),
+            Unit::Items => format!("Must have between {lo} and {hi} items."),
+            Unit::Value => format!("Must be between {lo} and {hi}."),
+        })
+    }
+}
+
+/// Text shape checks, all on `str`.
+macro_rules! text_rule {
+    ($(#[$m:meta])* $ty:ident, $fun:ident, $name:literal, $message:literal, |$s:ident| $ok:expr) => {
+        $(#[$m])*
+        pub struct $ty;
+
+        $(#[$m])*
+        pub fn $fun() -> $ty {
+            $ty
+        }
+
+        impl<T: AsRef<str> + ?Sized> Rule<T> for $ty {
+            fn name(&self) -> &str {
+                $name
+            }
+            fn check(&self, value: &T) -> Result<(), Message> {
+                let $s: &str = value.as_ref();
+                rule($ok, $message)
+            }
+        }
     };
-    check(ok, || "Must be a valid date (YYYY-MM-DD).".into())
+}
+
+text_rule!(
+    /// Shaped like an email address: one `@`, a local part, a dotted domain, no spaces.
+    /// Shape only: confirm ownership by sending mail.
+    Email, email, "email", "Must be a valid email address.",
+    |s| match s.split_once('@') {
+        Some((local, domain)) => !local.is_empty()
+            && !domain.contains('@')
+            && domain.contains('.')
+            && !domain.starts_with('.')
+            && !domain.ends_with('.')
+            && !s.chars().any(char::is_whitespace),
+        None => false,
+    }
+);
+
+text_rule!(
+    /// An `http` or `https` URL with a host.
+    Url, url, "url", "Must be a valid URL.",
+    |s| ["http://", "https://"].iter().any(|p| s.strip_prefix(p).is_some_and(|rest| {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        !host.is_empty() && !s.chars().any(char::is_whitespace)
+    }))
+);
+
+text_rule!(
+    /// A UUID in its 36-character hyphenated form.
+    Uuid, uuid, "uuid", "Must be a valid UUID.",
+    |s| s.len() == 36
+        && s.char_indices().all(|(i, c)| if [8, 13, 18, 23].contains(&i) { c == '-' } else { c.is_ascii_hexdigit() })
+);
+
+text_rule!(
+    /// A calendar date as `YYYY-MM-DD`, leap years included.
+    Date, date, "date", "Must be a date as YYYY-MM-DD.",
+    |s| {
+        let parts: Vec<&str> = s.split('-').collect();
+        match parts.as_slice() {
+            [y, m, d] if y.len() == 4 && m.len() == 2 && d.len() == 2 => {
+                match (y.parse::<u32>(), m.parse::<u32>(), d.parse::<u32>()) {
+                    (Ok(y), Ok(m), Ok(d)) => {
+                        let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0;
+                        let days = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+                        (1..=12).contains(&m) && d >= 1 && d <= days[m as usize - 1]
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+);
+
+text_rule!(
+    /// A whole number written as text, e.g. a query parameter: `-12`, `42`.
+    Integer, integer, "integer", "Must be a whole number.",
+    |s| s.trim().parse::<i64>().is_ok()
+);
+
+text_rule!(
+    /// A number written as text: `3`, `-0.5`, `1e3`.
+    Numeric, numeric, "numeric", "Must be a number.",
+    |s| s.trim().parse::<f64>().is_ok_and(f64::is_finite)
+);
+
+/// One of a fixed set of values: `one_of(["free", "pro"])` for text,
+/// `one_of([1, 2, 3])` for numbers.
+pub struct OneOf<V>(Vec<V>);
+
+pub fn one_of<V>(values: impl IntoIterator<Item = V>) -> OneOf<V> {
+    OneOf(values.into_iter().collect())
+}
+
+impl<T: AsRef<str> + ?Sized> Rule<T> for OneOf<&str> {
+    fn name(&self) -> &str {
+        "one_of"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        rule(self.0.contains(&value.as_ref()), format!("Must be one of: {}.", self.0.join(", ")))
+    }
+}
+
+impl<N: Number> Rule<N> for OneOf<N> {
+    fn name(&self) -> &str {
+        "one_of"
+    }
+    fn check(&self, value: &N) -> Result<(), Message> {
+        let list: Vec<String> = self.0.iter().map(N::to_string).collect();
+        rule(self.0.contains(value), format!("Must be one of: {}.", list.join(", ")))
+    }
+}
+
+/// Equal to another value, e.g. a password confirmation: `same(&self.password)`.
+pub struct Same<'a, T: ?Sized>(&'a T);
+
+pub fn same<T: ?Sized>(other: &T) -> Same<'_, T> {
+    Same(other)
+}
+
+impl<T: PartialEq + ?Sized> Rule<T> for Same<'_, T> {
+    fn name(&self) -> &str {
+        "same"
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        rule(value == self.0, "Does not match.")
+    }
+}
+
+/// `true`, for "I accept the terms" checkboxes.
+pub struct Accepted;
+
+pub fn accepted() -> Accepted {
+    Accepted
+}
+
+impl Rule<bool> for Accepted {
+    fn name(&self) -> &str {
+        "accepted"
+    }
+    fn check(&self, value: &bool) -> Result<(), Message> {
+        rule(*value, "Must be accepted.")
+    }
+}
+
+/// A one-off rule from a closure, with a name for [`Messages`](crate::Messages):
+/// `check_with("slug", |s: &str| rule(s.contains('/'), "Use owner/name."))`.
+pub struct Check<F>(&'static str, F);
+
+pub fn check_with<F>(name: &'static str, f: F) -> Check<F> {
+    Check(name, f)
+}
+
+impl<T: ?Sized, F: Fn(&T) -> Result<(), Message>> Rule<T> for Check<F> {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn check(&self, value: &T) -> Result<(), Message> {
+        (self.1)(value)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn ok(r: Result<(), Message>) -> bool {
-        r.is_ok()
+    fn ok<T: ?Sized, R: Rule<T>>(r: R, v: &T) -> bool {
+        r.check(v).is_ok()
     }
 
     #[test]
-    fn presence_and_length() {
-        assert!(!ok(required("  ")) && ok(required("x")));
-        assert!(!ok(min_len("ab", 3)) && ok(min_len("abc", 3)));
-        assert!(ok(max_len("héllo", 5)) && !ok(max_len("héllo!", 5)));
-        assert!(ok(exact_len("héllo", 5)) && !ok(exact_len("hello!", 5)));
-        assert!(ok(min_items(&[1, 2], 2)) && !ok(min_items(&[1], 2)));
-        assert!(ok(max_items(&[1], 1)) && !ok(max_items(&[1, 2], 1)));
+    fn required_understands_text_lists_and_options() {
+        assert!(!ok(required(), "  "));
+        assert!(ok(required(), "a"));
+        assert!(!ok(required(), &Vec::<u8>::new()));
+        assert!(!ok(required(), &None::<String>));
+        assert!(!ok(required(), &Some(String::new())));
+        assert!(ok(required(), &Some("x".to_owned())));
     }
 
     #[test]
-    fn numbers() {
-        assert!(ok(between(&5, 1, 10)) && !ok(between(&11, 1, 10)));
-        assert!(ok(at_least(&3, 3)) && !ok(at_least(&2, 3)));
-        assert!(ok(at_most(&3.5, 4.0)) && !ok(at_most(&5, 4)));
-        assert!(ok(integer("-12")) && !ok(integer("1.5")) && !ok(integer("x")));
-        assert!(ok(numeric("3.5")) && ok(numeric("-2")) && !ok(numeric("NaN")) && !ok(numeric("inf")) && !ok(numeric("")));
+    fn min_max_between_measure_each_kind() {
+        assert_eq!(max(3).check("abcd").unwrap_err(), "Must be at most 3 characters.");
+        assert_eq!(min(1).check(&Vec::<u8>::new()).unwrap_err(), "Must have at least 1 item.");
+        assert_eq!(between(1, 10).check(&11u32).unwrap_err(), "Must be between 1 and 10.");
+        assert!(ok(max(3), "héé"), "characters, not bytes");
+        assert!(ok(between(0.5, 1.5), &1.0f64));
     }
 
     #[test]
-    fn choices_and_comparisons() {
-        assert!(ok(one_of("b", &["a", "b"])) && !ok(one_of("c", &["a", "b"])));
-        assert!(ok(not_one_of("c", &["a", "b"])) && !ok(not_one_of("a", &["a", "b"])));
-        assert!(ok(same("pw", "pw")) && !ok(same("pw", "px")));
-        assert!(ok(different(&1, &2)) && !ok(different(&1, &1)));
-        assert!(ok(accepted(true)) && !ok(accepted(false)));
+    fn shapes() {
+        assert!(ok(email(), "ada@example.com") && !ok(email(), "ada@example") && !ok(email(), "a b@x.io"));
+        assert!(ok(url(), "https://toolkit.dev/docs") && !ok(url(), "ftp://x.io") && !ok(url(), "https://"));
+        assert!(ok(uuid(), "123e4567-e89b-12d3-a456-426614174000") && !ok(uuid(), "123e4567"));
+        assert!(ok(date(), "2024-02-29") && !ok(date(), "2023-02-29") && !ok(date(), "2024-13-01"));
+        assert!(ok(integer(), "-12") && !ok(integer(), "1.5"));
+        assert!(ok(numeric(), "-0.5") && !ok(numeric(), "NaN") && !ok(numeric(), "abc"));
     }
 
     #[test]
-    fn character_classes() {
-        assert!(ok(alpha("héllo")) && !ok(alpha("he11o")) && !ok(alpha("")));
-        assert!(ok(alpha_num("abc123")) && !ok(alpha_num("abc-123")));
-        assert!(ok(alpha_dash("my-repo_2")) && !ok(alpha_dash("my repo")));
-        assert!(ok(lowercase("abc-1")) && !ok(lowercase("aBc")));
-        assert!(ok(uppercase("ABC-1")) && !ok(uppercase("AbC")));
-        assert!(ok(starts_with("#tag", "#")) && !ok(starts_with("tag", "#")));
-        assert!(ok(ends_with("a.rs", ".rs")) && !ok(ends_with("a.ts", ".rs")));
+    fn one_of_same_accepted_and_closures() {
+        assert!(ok(one_of(["free", "pro"]), "pro"));
+        assert_eq!(one_of(["free", "pro"]).check("gold").unwrap_err(), "Must be one of: free, pro.");
+        assert!(ok(one_of([1, 2]), &2) && !ok(one_of([1, 2]), &3));
+        assert!(ok(same("pw"), "pw") && !ok(same("pw"), "px"));
+        assert!(ok(accepted(), &true) && !ok(accepted(), &false));
+        let slug = check_with("slug", |s: &str| rule(s.contains('/'), "Use owner/name."));
+        assert_eq!(Rule::<str>::name(&slug), "slug");
+        assert!(ok(slug, "a/b"));
     }
 
     #[test]
-    fn formats() {
-        for good in ["a@b.co", "x.y+z@mail.example.org"] {
-            assert!(ok(email(good)), "{good}");
-        }
-        for bad in ["", "a", "@b.co", "a@b", "a@b.", "a@@b.co", "a b@c.de"] {
-            assert!(!ok(email(bad)), "{bad}");
-        }
-        for good in ["https://example.com", "http://localhost:3000/a?b=1", "https://x.io#top"] {
-            assert!(ok(url(good)), "{good}");
-        }
-        for bad in ["example.com", "ftp://x.com", "https://", "https://:80", "https://a b.com"] {
-            assert!(!ok(url(bad)), "{bad}");
-        }
-        assert!(ok(uuid("123e4567-e89b-12d3-a456-426614174000")) && !ok(uuid("123e4567e89b12d3a456426614174000")));
-        assert!(!ok(uuid("123e4567-e89b-12d3-a456-42661417400g")));
-        assert!(ok(ip("10.0.0.1")) && ok(ip("::1")) && !ok(ip("10.0.0.256")));
-        assert!(ok(ipv4("10.0.0.1")) && !ok(ipv4("::1")) && ok(ipv6("::1")) && !ok(ipv6("10.0.0.1")));
-        for good in ["2024-02-29", "2000-02-29", "1999-12-31"] {
-            assert!(ok(date(good)), "{good}");
-        }
-        for bad in ["2023-02-29", "1900-02-29", "2024-13-01", "2024-04-31", "2024-4-01", "24-04-01", "2024-04-00"] {
-            assert!(!ok(date(bad)), "{bad}");
-        }
-    }
-
-    #[test]
-    fn helpers() {
-        assert!(ok(nullable(None::<&str>, required)) && !ok(nullable(Some(""), required)));
-        assert_eq!(required("").or_message("Tell us your name."), Err("Tell us your name.".into()));
-        assert!(ok(required("x").or_message("unused")));
-        assert_eq!(rule(false, "Nope."), Err("Nope.".into()));
+    fn text_rules_check_strings_too() {
+        assert!(!ok(email(), &String::from("nope")));
+        assert!(ok(one_of(["a"]), &String::from("a")));
     }
 }

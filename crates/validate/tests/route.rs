@@ -7,6 +7,7 @@ use route::{
 use serde::Deserialize;
 use validate::{Errors, Valid, Validate, required};
 
+
 #[derive(Deserialize)]
 struct New {
     name: String,
@@ -14,7 +15,7 @@ struct New {
 
 impl Validate for New {
     fn validate(&self, e: &mut Errors) {
-        e.check("name", required(&self.name));
+        e.field("name", self.name.as_str()).rule(required());
     }
 }
 
@@ -50,7 +51,7 @@ struct Renamed {
 
 impl Validate for Renamed {
     fn validate(&self, e: &mut Errors) {
-        e.field("name", &self.name).required();
+        e.field("name", self.name.as_str()).rule(required());
     }
 
     fn messages(&self) -> validate::Messages {

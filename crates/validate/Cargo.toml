@@ -1,6 +1,6 @@
 [package]
 name = "validate"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Validate input and prove it with Valid<T>"
@@ -9,8 +9,12 @@ description = "Validate input and prove it with Valid<T>"
 serde = { version = "1", features = ["derive"] }
 
 route = { path = "../route", optional = true }
+validate-derive = { path = "../validate-derive", optional = true }
 
 [features]
+default = ["derive"]
+# `#[derive(Validate)]`: rules as attributes on struct fields.
+derive = ["dep:validate-derive"]
 # `Valid<Form<T>>` (and `Json`, `Query`, `Path`) as a handler input.
 route = ["dep:route"]
 

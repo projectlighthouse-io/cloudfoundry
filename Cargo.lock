@@ -2534,13 +2534,23 @@ checksum = "3a3b425286980a367278453f3b6d28cdcb134b574e5a35824a6ff5eebad50bb6"
 
 [[package]]
 name = "validate"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "http-body-util",
  "route",
  "serde",
  "serde_json",
  "tokio",
+ "validate-derive",
+]
+
+[[package]]
+name = "validate-derive"
+version = "0.2.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]
