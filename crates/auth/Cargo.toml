@@ -40,6 +40,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/requests/register.rs" = "src/requests/register.rs"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
+"stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -51,6 +53,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/requests/register.rs" = "src/requests/register.rs"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
+"stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/sqlite/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -62,6 +66,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/requests/register.rs" = "src/requests/register.rs"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
+"stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/mysql/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/mysql/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
@@ -71,10 +77,12 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/ui/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/ui/handlers/register.rs" = "src/handlers/register.rs"
 "stubs/ui/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
+"stubs/ui/handlers/password.rs" = "src/handlers/password.rs"
 "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
 "stubs/pages/register.vue" = "resources/js/pages/auth/register.vue"
 "stubs/pages/forgot-password.vue" = "resources/js/pages/auth/forgot-password.vue"
 "stubs/pages/reset-password.vue" = "resources/js/pages/auth/reset-password.vue"
+"stubs/pages/settings/password.vue" = "resources/js/pages/settings/password.vue"
 
 [package.metadata.art]
 notes = """
@@ -84,13 +92,17 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
-  src/handlers/mod.rs   pub mod login; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password_reset; pub mod register;
+  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
   src/routes.rs         r.post("/login", handlers::login::login).name("login");
                         r.post("/logout", handlers::login::logout).name("logout");
                         r.post("/register", handlers::register::store).name("register");
                         r.post("/forgot-password", handlers::password_reset::email).name("password.email");
                         r.post("/reset-password", handlers::password_reset::update).name("password.update");
+                        r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.post("/password", handlers::password::update).name("password.change");
+                        });
 
 Then run `art migrate`. Reset links are logged until you send them by mail
 (`send_reset_link` in src/handlers/password_reset.rs); set APP_URL to your frontend."""
@@ -101,8 +113,8 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
-  src/handlers/mod.rs   pub mod login; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password_reset; pub mod register;
+  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");
                         r.post("/login", handlers::login::login).name("login.store");
                         r.post("/logout", handlers::login::logout).name("logout");
@@ -112,6 +124,11 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         r.post("/forgot-password", handlers::password_reset::email).name("password.email");
                         r.get("/reset-password/{token}", handlers::password_reset::edit).name("password.reset");
                         r.post("/reset-password", handlers::password_reset::update).name("password.update");
+                        r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/password", handlers::password::edit).name("password.edit");
+                            r.post("/password", handlers::password::update).name("password.change");
+                        });
 
 Then run `art migrate`. Reset links are logged until you send them by mail
 (`send_reset_link` in src/handlers/password_reset.rs); set APP_URL for the link."""

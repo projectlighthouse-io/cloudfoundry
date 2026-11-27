@@ -15,6 +15,7 @@
 //!
 //! - [`Resets`] + [`reset_link_token`] / [`reset_password`]: "forgot password"
 //!   links. Sending the mail is the app's.
+//! - [`Auth::change_password`]: a logged-in user changes their password.
 //!
 //! Only the user id is stored in the session. The user is loaded at most once
 //! per request, and only if something asks.
@@ -237,6 +238,28 @@ pub async fn reset_password<P: Resets>(users: &P, login: &str, token: &str, new_
     users.delete_reset(users.id(&user)).await.map_err(ResetError::Other)?;
     Ok(user)
 }
+
+/// Why [`Auth::change_password`] did not change the password.
+#[derive(Debug)]
+pub enum ChangeError {
+    /// Nobody is logged in.
+    NotLoggedIn,
+    /// The current password is wrong.
+    WrongPassword,
+    Other(Error),
+}
+
+impl fmt::Display for ChangeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotLoggedIn => f.write_str("not logged in"),
+            Self::WrongPassword => f.write_str("the current password is incorrect"),
+            Self::Other(e) => write!(f, "changing the password failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ChangeError {}
 
 /// Failed-login limiter with its algorithm and store erased.
 trait LoginLimiter: Send + Sync {
@@ -740,6 +763,31 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
             self.login(&user);
         }
         Ok(user)
+    }
+}
+
+impl<U: Clone + Send + Sync + 'static> Auth<U> {
+    /// Change the logged-in user's password once `current` checks out. The
+    /// session gets a new id and, with "remember me", the remember token is
+    /// cleared, so a stolen session or remember cookie stops working. The
+    /// user stays logged in on this device.
+    pub async fn change_password<P>(&self, users: &P, current: &str, new: &str) -> Result<(), ChangeError>
+    where
+        P: Credentials<User = U>,
+    {
+        let user = self.user.clone().ok_or(ChangeError::NotLoggedIn)?;
+        let (hash, pw) = (users.password_hash(&user), current.to_owned());
+        let ok = tokio::task::spawn_blocking(move || password::verify(&pw, &hash).is_ok()).await.map_err(|e| ChangeError::Other(e.into()))?;
+        if !ok {
+            return Err(ChangeError::WrongPassword);
+        }
+        let new_hash = hash_password(new).await.map_err(ChangeError::Other)?;
+        users.set_password_hash(users.id(&user), new_hash).await.map_err(ChangeError::Other)?;
+        if self.cx.remember.is_some() {
+            *self.cx.pending.lock().unwrap() = Pending::Forget { id: Some(self.cx.provider.id(&user)) };
+        }
+        self.login(&user);
+        Ok(())
     }
 }
 
