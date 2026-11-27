@@ -13,6 +13,9 @@
 //!   old hashes, log in. With feature `throttle`, `.throttle(limiter)` limits
 //!   failed attempts per login and IP.
 //!
+//! - [`Resets`] + [`reset_link_token`] / [`reset_password`]: "forgot password"
+//!   links. Sending the mail is the app's.
+//!
 //! Only the user id is stored in the session. The user is loaded at most once
 //! per request, and only if something asks.
 
@@ -163,6 +166,77 @@ impl fmt::Display for AttemptError {
 }
 
 impl std::error::Error for AttemptError {}
+
+/// Providers that keep password reset tokens: at most one per user, as a
+/// SHA-256 hash with its creation time.
+pub trait Resets: Credentials {
+    /// Store the token hash for the user with `id`, replacing any older one.
+    fn store_reset(&self, id: Self::Id, hash: String, created_at: i64) -> impl Future<Output = Result<(), Error>> + Send;
+    /// The stored hash and creation time (unix seconds) for the user with `id`.
+    fn find_reset(&self, id: Self::Id) -> impl Future<Output = Result<Option<(String, i64)>, Error>> + Send;
+    fn delete_reset(&self, id: Self::Id) -> impl Future<Output = Result<(), Error>> + Send;
+}
+
+/// How long a reset link works.
+pub const RESET_EXPIRES: Duration = Duration::from_secs(60 * 60);
+/// How often a user can be sent a new link.
+pub const RESET_THROTTLE: Duration = Duration::from_secs(60);
+
+/// Why a reset step failed.
+#[derive(Debug)]
+pub enum ResetError {
+    /// No user has that login. Show the same message as success, so the form
+    /// does not reveal who has an account.
+    UnknownUser,
+    /// A link was made less than [`RESET_THROTTLE`] ago.
+    Throttled,
+    /// The token is wrong, used or older than [`RESET_EXPIRES`].
+    InvalidToken,
+    Other(Error),
+}
+
+impl fmt::Display for ResetError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownUser => f.write_str("no user with that login"),
+            Self::Throttled => f.write_str("a reset link was sent moments ago"),
+            Self::InvalidToken => f.write_str("this password reset token is invalid"),
+            Self::Other(e) => write!(f, "password reset failed: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for ResetError {}
+
+/// Make a reset token for `login`. Returns the user (to address the mail)
+/// and the plain token to put in the link; only its hash is stored.
+pub async fn reset_link_token<P: Resets>(users: &P, login: &str) -> Result<(P::User, String), ResetError> {
+    let user = users.by_login(login).await.map_err(ResetError::Other)?.ok_or(ResetError::UnknownUser)?;
+    let now = unix_now();
+    if let Some((_, created)) = users.find_reset(users.id(&user)).await.map_err(ResetError::Other)? {
+        if now - created < RESET_THROTTLE.as_secs() as i64 {
+            return Err(ResetError::Throttled);
+        }
+    }
+    let token = random_token();
+    users.store_reset(users.id(&user), hash_token(&token), now).await.map_err(ResetError::Other)?;
+    Ok((user, token))
+}
+
+/// Set a new password if `token` is the user's current, unexpired reset
+/// token. The token is used up. Returns the user, e.g. to log them in.
+pub async fn reset_password<P: Resets>(users: &P, login: &str, token: &str, new_password: &str) -> Result<P::User, ResetError> {
+    let user = users.by_login(login).await.map_err(ResetError::Other)?.ok_or(ResetError::InvalidToken)?;
+    let stored = users.find_reset(users.id(&user)).await.map_err(ResetError::Other)?;
+    let fresh = |created: i64| unix_now() - created < RESET_EXPIRES.as_secs() as i64;
+    if !stored.is_some_and(|(hash, created)| ct_eq(&hash, &hash_token(token)) && fresh(created)) {
+        return Err(ResetError::InvalidToken);
+    }
+    let hash = hash_password(new_password).await.map_err(ResetError::Other)?;
+    users.set_password_hash(users.id(&user), hash).await.map_err(ResetError::Other)?;
+    users.delete_reset(users.id(&user)).await.map_err(ResetError::Other)?;
+    Ok(user)
+}
 
 /// Failed-login limiter with its algorithm and store erased.
 trait LoginLimiter: Send + Sync {

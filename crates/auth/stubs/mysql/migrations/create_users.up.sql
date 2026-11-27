@@ -16,3 +16,11 @@ create table api_tokens (
     created_at timestamp not null default current_timestamp,
     foreign key (user_id) references users (id) on delete cascade
 );
+
+-- Password reset tokens: one per user, SHA-256 hash, unix-seconds creation time.
+create table password_resets (
+    user_id bigint primary key,
+    token_hash char(64) not null,
+    created_at bigint not null,
+    foreign key (user_id) references users (id) on delete cascade
+);

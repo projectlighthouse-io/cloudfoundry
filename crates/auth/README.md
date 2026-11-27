@@ -37,5 +37,10 @@ without a session. `auth::issue_token(&users, &user, "cli", Some(ttl))` returns 
 once and stores only its SHA-256 hash; expired tokens are rejected; `auth::revoke_token(&users,
 auth.bearer_token().unwrap())` logs an API client out.
 
-`art publish auth [--driver sqlite|mysql]` copies login handlers, the login page, a `users` migration and a
-`Provider` into the app, to own and edit.
+Password reset: implement `auth::Resets` (one hashed token per user), then
+`auth::reset_link_token(&users, email)` makes the link token (throttled to one a minute) and
+`auth::reset_password(&users, email, token, new_password)` checks it (valid for an hour) and sets
+the password. Sending the mail is the app's.
+
+`art publish auth [--driver sqlite|mysql]` copies login, registration and password reset handlers and pages, the
+`users`/`api_tokens`/`password_resets` migration and a `Provider` into the app, to own and edit.

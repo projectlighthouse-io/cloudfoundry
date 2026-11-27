@@ -15,3 +15,10 @@ create table api_tokens (
     expires_at integer,
     created_at text not null default current_timestamp
 );
+
+-- Password reset tokens: one per user, SHA-256 hash, unix-seconds creation time.
+create table password_resets (
+    user_id integer primary key references users (id) on delete cascade,
+    token_hash text not null,
+    created_at integer not null
+);

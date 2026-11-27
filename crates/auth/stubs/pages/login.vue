@@ -27,6 +27,7 @@ const form = useForm({ email: '', password: '', remember: false })
 
       <button type="submit" :disabled="form.processing">Log in</button>
     </form>
+    <p><Link href="/forgot-password">Forgot your password?</Link></p>
     <p>No account yet? <Link href="/register">Register</Link></p>
   </main>
 </template>

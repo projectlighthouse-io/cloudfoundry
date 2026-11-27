@@ -117,3 +117,31 @@ impl auth::Tokens for Users {
         Ok(())
     }
 }
+
+/// "Forgot password": `auth::reset_link_token` / `auth::reset_password`.
+impl auth::Resets for Users {
+    async fn store_reset(&self, id: i64, hash: String, created_at: i64) -> Result<(), auth::Error> {
+        let mut tx = self.db.pool().begin().await?;
+        sqlx::query("delete from password_resets where user_id = $1").bind(id).execute(&mut *tx).await?;
+        sqlx::query("insert into password_resets (user_id, token_hash, created_at) values ($1, $2, $3)")
+            .bind(id)
+            .bind(hash)
+            .bind(created_at)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn find_reset(&self, id: i64) -> Result<Option<(String, i64)>, auth::Error> {
+        Ok(sqlx::query_as("select token_hash, created_at from password_resets where user_id = $1")
+            .bind(id)
+            .fetch_optional(self.db.pool())
+            .await?)
+    }
+
+    async fn delete_reset(&self, id: i64) -> Result<(), auth::Error> {
+        sqlx::query("delete from password_resets where user_id = $1").bind(id).execute(self.db.pool()).await?;
+        Ok(())
+    }
+}
