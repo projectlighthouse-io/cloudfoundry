@@ -1946,6 +1946,7 @@ dependencies = [
  "serde",
  "serde_urlencoded",
  "session",
+ "sha2",
  "tokio",
 ]
 

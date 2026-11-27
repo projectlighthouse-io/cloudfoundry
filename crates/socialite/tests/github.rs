@@ -4,7 +4,7 @@ use route::{
 };
 use securecookie::{Codec, Keys};
 use session::{MemoryStore, Session};
-use socialite::{Callback, GitHub};
+use socialite::{Callback, GitHub, Provider};
 
 /// Fake github.com and api.github.com on one local port.
 async fn fake_github() -> String {
