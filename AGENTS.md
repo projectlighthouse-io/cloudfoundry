@@ -28,7 +28,8 @@ cargo run -p art -- new demo             # scaffold an app (path deps on this ch
 ```
 
 Store conformance tests (`crates/{session,queue,throttle,teams}/tests/stores.rs`) run SQLite always, and
-Postgres / MySQL when `*_PG_URL` / `*_MYSQL_URL` point at `postgres:16-alpine` / `mysql:8.4`.
+Postgres / MySQL when `*_PG_URL` / `*_MYSQL_URL` point at `postgres:16-alpine` / `mysql:8.4`; the session
+Redis store when `SESSION_REDIS_URL` points at `redis:7-alpine`.
 
 Smoke-test `art new` and `art publish` output by scaffolding outside the workspace and building it.
 
@@ -37,8 +38,8 @@ Smoke-test `art new` and `art publish` output by scaffolding outside the workspa
 - `route`: `Router<S>` collects routes, groups and layers; `build(state)` composes each route's tower layers once (first added = outermost) and freezes into `Routes`. Handlers take up to six arguments: head-only inputs (`FromRequestParts`: `Cx<S>`, `Path`, `Session`, ...) first, at most one body-reading `FromRequest` input last. A tuple of inputs is also one input.
 - Layers find types from other crates in request extensions: the session layer inserts `Session`; csrf reads a `TokenStore`; `auth::layer` inserts the provider; route inserts `Matched` and `UrlFor`. Order: session, csrf, auth, inertia.
 - `validate`: `Valid<T>` only via `Valid::check`; rules are `Rule<T>` values, attached by `#[derive(Validate)]` (crate `validate-derive`, default feature `derive`); with feature `route`, `Errors` is a `422` response.
-- `teams`: roles are app enums, each permission an app type with a `Grants` impl; `Can<P, R>` / `OrgCan<P, O>` read `{team}` / `{org}` (404 for non-members, 403 without `P`). `teams::layer` goes after `auth::layer`; rules live in `Teams`, stores only keep data.
-- `art make:*` writes one file and appends one `pub mod` line; `art new` templates go through `.replace("{name}", ..)`.
+- `teams`: roles are app enums, each permission an app type with a `Grants` impl; `Can<P, R>` / `OrgCan<P, O>` read `{team}` / `{org}` (404 for non-members, 403 without `P`). `teams::layer` goes after `auth::layer`; rules live in `Teams`, stores only keep data. `CurrentTeam` is `users.current_team_id` (the teams migration alters the app's users table, no FK) cached in the session, falling back to the first team and storing it. `Teams::require_team(name)` creates a personal team on first `CurrentTeam` and makes leaving the last team `Error::LastTeam`. Invitation tokens are stored hashed: a link can be shown only right after `invite` / `resend_*`.
+- `art make:*` writes one file and appends one `pub mod` line; `art new` templates go through `.replace("{name}", ..)`, including the frontend files in `art/templates/` (stylesheet, layouts, components; `include_str!`). Published `--with-ui` pages import them, and a test checks every relative import in the scaffold resolves. Keep `crates/*/stubs/pages` in step with the starter app's pages.
 - Known rustc HRTB `Send` issue: a generic service projection naming `Request<route::Body>` fails `Send`; make layers generic over the request body.
 
 ## Commits

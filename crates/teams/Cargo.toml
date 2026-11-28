@@ -85,6 +85,7 @@ agents = """
 - Roles (`TeamRole`, `OrgRole`) and permissions (unit structs with `teams::Grants` impls) live in `src/access.rs`. Add a permission there, then take `Can<MyPermission, TeamRole>` (or `OrgCan<_, OrgRole>`) in the handler: it is `404` for non-members and `403` without the permission.
 - Routes name their team by id: `/teams/{team}/...`, `/organizations/{org}/...`. `Membership<TeamRole>` loads `{team}` for any member; `CurrentTeam<TeamRole>` is the team to land on.
 - `CurrentTeam` is stored in `users.current_team_id` and cached in the session; `current.set(&membership).await` switches. Teams are required (`require_team` in `src/access.rs`): a user without one gets a personal team, and `Error::LastTeam` stops them leaving their last; call `keeps_a_team` before deleting a team or organization.
+- Before `invite`, call `access::not_a_member` (the store has no emails). One pending invitation per email (`AlreadyInvited`); `resend_team_invitation` / `resend_org_invitation` issue a new link.
 - Change teams through `access::teams(&cx.db)` (`create_team`, `add_member`, `change_role`, `invite`, `accept`, ...): it enforces the last-owner and org-membership rules. Map its errors with `access::failed`.
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/teams.md"""
 notes = """
