@@ -25,6 +25,9 @@ async function get(url: string): Promise<PublicKeyCredential | null> {
   })) as PublicKeyCredential | null
 }
 
+/** The credential as plain JSON (its `toJSON()`), in the shape Inertia posts. */
+const json = (credential: Credential) => JSON.parse(JSON.stringify(credential))
+
 const cancelled = (e: unknown) => e instanceof DOMException && e.name === 'NotAllowedError'
 
 /** Add a passkey to the signed-in account. */
@@ -34,7 +37,7 @@ export async function register(name: string, onError?: (message: string) => void
     const credential = await navigator.credentials.create({
       publicKey: PublicKeyCredential.parseCreationOptionsFromJSON(publicKey),
     })
-    if (credential) router.post('/settings/passkeys', { name, credential: (credential as PublicKeyCredential).toJSON() }, { preserveScroll: true })
+    if (credential) router.post('/settings/passkeys', { name, credential: json(credential) }, { preserveScroll: true })
   } catch (e) {
     if (!cancelled(e)) onError?.('This browser could not create a passkey.')
   }
@@ -44,7 +47,7 @@ export async function register(name: string, onError?: (message: string) => void
 export async function signIn() {
   try {
     const credential = await get('/passkeys/login/options')
-    if (credential) router.post('/passkeys/login', { credential: credential.toJSON() })
+    if (credential) router.post('/passkeys/login', { credential: json(credential) })
   } catch (e) {
     if (!cancelled(e)) throw e
   }
@@ -54,7 +57,7 @@ export async function signIn() {
 export async function secondFactor(trust = false) {
   try {
     const credential = await get('/two-factor-challenge/passkey/options')
-    if (credential) router.post('/two-factor-challenge/passkey', { credential: credential.toJSON(), trust })
+    if (credential) router.post('/two-factor-challenge/passkey', { credential: json(credential), trust })
   } catch (e) {
     if (!cancelled(e)) throw e
   }
@@ -64,7 +67,7 @@ export async function secondFactor(trust = false) {
 export async function confirmWithPasskey() {
   try {
     const credential = await get('/settings/confirm-passkey/options')
-    if (credential) router.post('/settings/confirm-passkey', { credential: credential.toJSON() })
+    if (credential) router.post('/settings/confirm-passkey', { credential: json(credential) })
   } catch (e) {
     if (!cancelled(e)) throw e
   }

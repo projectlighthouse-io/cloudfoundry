@@ -55,6 +55,7 @@ impl UserStore {
     }
 
     /// The user's API tokens, oldest first.
+    #[allow(dead_code, reason = "for an API tokens settings page")]
     pub async fn tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, sqlx::Error> {
         sqlx::query_as("select uuid, name, expires_at from api_tokens where user_id = ? order by id")
             .bind(user_id)
@@ -63,6 +64,7 @@ impl UserStore {
     }
 
     /// Revoke one of the user's tokens by uuid. `false` if it is not theirs.
+    #[allow(dead_code, reason = "for an API tokens settings page")]
     pub async fn delete_token_by_uuid(&self, user_id: i64, token: Uuid<ApiToken>) -> Result<bool, sqlx::Error> {
         let done = sqlx::query("delete from api_tokens where user_id = ? and uuid = ?")
             .bind(user_id)

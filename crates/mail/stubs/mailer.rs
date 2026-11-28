@@ -28,9 +28,8 @@ impl mail::HasMailer for App {
     }
 }
 
-/// Render `template` (a `resources/mail/*.md` file) for `to` and send it: from
-/// the queue with `[mail] queue = true` (the default; `queue:work` must run),
-/// or now. Failures are logged: callers carry on.
+/// Render `template` (a `resources/mail/*.md` file) for `to` and send it: now,
+/// or from the queue with `[mail] queue = true` (then `queue:work` must run). Failures are logged: callers carry on.
 pub async fn deliver(app: &App, template: &str, to: &str, vars: &[(&str, &str)]) {
     let message = match mail::Template::parse(template).and_then(|t| t.message(to, vars)) {
         Ok(m) => m,

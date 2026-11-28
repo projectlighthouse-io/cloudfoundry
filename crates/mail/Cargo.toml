@@ -31,7 +31,8 @@ toml = "0.9"
 
 [package.metadata.art]
 agents = """
-- Mail (`mail`): `crate::mailer::mailer(&app)` is the app's one `mail::Mailer`, built from `[mail]` in config (`url`: `smtp://user:pass@host:587?tls=required`, `smtps://...`, `log`, or `memory`; `from`). `mailer(&app).send(message).await` sends now.
+- Mail (`mail`): `crate::mailer::deliver(&app, include_str!("../resources/mail/x.md"), to, &[("link", &link)]).await` renders a template and sends it, from the queue when `[mail] queue = true` (then `queue:work` must run; `mail::SendMail<App>` is registered in `src/jobs/mod.rs`). Templates: a `Subject:` line, a blank line, then a Markdown-ish body (`#`, `-`, `**bold**`, `[text](url)`; a lone link is a button) with `{{name}}` values.
+- `crate::mailer::mailer(&app)` is the app's one `&dyn mail::Mailer`, built from `[mail]` in config (`url`: `smtp://user:pass@host:587?tls=required`, `smtps://...`, `log`, or `memory`; `from`). `mailer(&app).send(message).await` sends now, without a template.
 - The `log` driver (the default) writes each mail to the log: development only, links in it are live. Tests build a `mail::MemoryMailer` and read `.sent()`.
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/mail.md"""
 notes = """
@@ -45,7 +46,7 @@ Add the dependency `mail = { <same source as the other crates>, features = ["con
   config/default.toml   [mail]
                         url = "secret_env(MAIL_URL, log)"   # smtp://user:pass@host:587?tls=required, smtps://..., log, memory
                         from = "env(MAIL_FROM, hello@example.test)"
-                        queue = true   # mail goes out from `queue:work`; false sends during the request
+                        queue = false  # true in production: mail goes out from `queue:work` (run it!)
 
 Locally, Mailpit catches everything: `docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`,
 MAIL_URL=smtp://127.0.0.1:1025, and read the mail at http://localhost:8025."""

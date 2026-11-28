@@ -217,7 +217,7 @@ impl Mailer for MemoryMailer {
 /// [mail]
 /// url = "secret_env(MAIL_URL, log)"
 /// from = "env(MAIL_FROM, Acme <hello@acme.test>)"
-/// queue = true   # send from `queue:work`; false sends during the request
+/// queue = false  # true: send from `queue:work` (run a worker); false: during the request
 /// ```
 #[cfg(feature = "configured")]
 #[derive(Clone, Debug, configured::serde::Deserialize)]
@@ -226,15 +226,16 @@ pub struct Config {
     /// `smtp://user:pass@host:587?tls=required`, `smtps://...`, `log` or `memory`. A secret: it may hold a password.
     pub url: configured::SecretString,
     pub from: String,
-    /// Send through the queue (a worker must run) instead of during the request.
+    /// Send through the queue instead of during the request. Off by default:
+    /// with it on, nothing goes out unless `queue:work` runs.
     pub queue: bool,
 }
 
-/// `log`, from `hello@example.test`, queued.
+/// `log`, from `hello@example.test`, sent during the request.
 #[cfg(feature = "configured")]
 impl Default for Config {
     fn default() -> Self {
-        Self { url: "log".into(), from: "hello@example.test".into(), queue: true }
+        Self { url: "log".into(), from: "hello@example.test".into(), queue: false }
     }
 }
 

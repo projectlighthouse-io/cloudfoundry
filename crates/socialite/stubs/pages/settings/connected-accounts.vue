@@ -37,7 +37,7 @@ const date = (at: number) => new Date(at * 1000).toLocaleDateString()
       <p v-if="!accounts.length" class="hint">None yet.</p>
       <ul class="ledger">
         <li v-for="a in accounts" :key="a.provider">
-          <img v-if="a.avatar_url" class="avatar" :src="a.avatar_url" alt="" width="28" height="28" />
+          <img v-if="a.avatar_url" class="provider-avatar" :src="a.avatar_url" alt="" width="28" height="28" />
           <span class="who-text">
             <span class="name">{{ labels[a.provider] ?? a.provider }}<template v-if="a.username"> · {{ a.username }}</template></span>
             <span class="meta">{{ a.email ?? 'no email shared' }} · {{ a.last_used_at ? `last used ${date(a.last_used_at)}` : 'never used to sign in' }}</span>
@@ -64,7 +64,7 @@ const date = (at: number) => new Date(at * 1000).toLocaleDateString()
 </template>
 
 <style scoped>
-.avatar {
+.provider-avatar {
   border-radius: 50%;
   margin-right: 12px;
 }

@@ -15,7 +15,7 @@ use validate::Valid;
 
 use super::team::{InvitationItem, SENT_LINK, SentLink, flash_link};
 use crate::{
-    access::{self, MemberItem, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
+    access::{self, MemberItem, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg},
     requests::team::{NewOrganization, OrgInvite, OrgRoleChange},
     state::App,
     users::User,

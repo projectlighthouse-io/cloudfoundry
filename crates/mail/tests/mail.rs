@@ -29,11 +29,11 @@ fn urls_pick_the_driver() {
 #[cfg(feature = "configured")]
 #[test]
 fn config_reads_the_mail_section() {
-    let cfg: mail::Config = toml::from_str("url = \"memory\"\nfrom = \"Acme <hello@acme.test>\"\nqueue = false").unwrap();
-    assert!(!cfg.queue);
+    let cfg: mail::Config = toml::from_str("url = \"memory\"\nfrom = \"Acme <hello@acme.test>\"\nqueue = true").unwrap();
+    assert!(cfg.queue);
     mail::from_config(&cfg).unwrap();
     let default: mail::Config = toml::from_str("").unwrap();
-    assert_eq!((default.from.as_str(), default.queue), ("hello@example.test", true));
+    assert_eq!((default.from.as_str(), default.queue), ("hello@example.test", false), "sent during the request unless a worker is promised");
     assert!(toml::from_str::<mail::Config>("nope = 1").is_err(), "unknown keys fail");
 }
 
