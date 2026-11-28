@@ -1,11 +1,12 @@
 [package]
 name = "socialite"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "OAuth login with third-party providers"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 base64 = "0.22"
 getrandom = "0.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -28,6 +29,8 @@ oidc = ["dep:serde_json"]
 auth0 = ["oidc"]
 # `socialite::routes(r, provider, callback)` and the `SocialCallback` input.
 route = ["dep:route", "session/route"]
+# `ProviderConfig` and `from_config` on each provider: credentials from config files.
+configured = ["dep:configured"]
 
 [dev-dependencies]
 base64 = "0.22"
@@ -40,6 +43,7 @@ session = { path = "../session", features = ["route"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "net"] }
 http-body-util = "0.1"
 serde = { version = "1", features = ["derive"] }
+toml = "0.9"
 
 [package.metadata.art.publish]
 "stubs/migrations/create_social_accounts.up.sql" = "migrations/{timestamp}_create_social_accounts.up.sql"
@@ -74,16 +78,25 @@ serde = { version = "1", features = ["derive"] }
 agents = """
 - Each provider is a Cargo feature (`google`, `github`, ...) plus `route`; `socialite::routes(&mut r, provider, handlers::social::callback)` adds `/auth/{provider}` and its callback.
 - Account linking lives in `src/social.rs` (`Users::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`.
+- Provider credentials live in `[socialite.<provider>]` in config (`ProviderConfig`, feature `configured`); build with `GitHub::from_config(cfg)?`. Secrets come from `required_secret_env(...)`, never literals.
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/socialite.md"""
 notes = """
 Needs `auth` published first (it extends src/users.rs). Enable the route feature and your providers:
-  socialite = { <source>, features = ["route", "google", "github"] }
+  socialite = { <source>, features = ["route", "google", "github", "configured"] }
 
+  config/default.toml   [socialite.google]   # a provider is on when its section is present
+                        client_id = "required_env(GOOGLE_CLIENT_ID)"
+                        client_secret = "required_secret_env(GOOGLE_CLIENT_SECRET)"
+                        redirect_url = "env(GOOGLE_REDIRECT_URL, http://localhost:3000/auth/google/callback)"
+  src/config.rs         #[serde(default)] pub socialite: Social,   in Config, with
+                        #[derive(serde::Deserialize, Default)] #[serde(deny_unknown_fields)]
+                        pub struct Social { pub google: Option<socialite::ProviderConfig> }
   src/main.rs           mod social;
+                        let Loaded { value: mut cfg, listing } = Config::load()?;   // `mut`, to take the providers
                         let mut r = routes::register(Router::new());
-                        if let (Ok(id), Ok(secret)) = (std::env::var("GOOGLE_CLIENT_ID"), std::env::var("GOOGLE_CLIENT_SECRET")) {
-                            let cb = format!("{}/auth/google/callback", std::env::var("APP_URL").unwrap_or_default());
-                            socialite::routes(&mut r, socialite::Google::new(id, secret, cb), handlers::social::callback);
+                        let providers = std::mem::take(&mut cfg.socialite);
+                        if let Some(google) = providers.google {
+                            socialite::routes(&mut r, socialite::Google::from_config(google).map_err(config_error)?, handlers::social::callback);
                         }
                         // ... the same per provider; then .layer(...) and .build(...) on `r`
   src/handlers/mod.rs   pub mod social;
@@ -94,14 +107,22 @@ social-only accounts have no password until they set one with "forgot password".
 Then run `art migrate`."""
 with-ui-notes = """
 Needs `auth --with-ui` published first. Enable the route feature and your providers:
-  socialite = { <source>, features = ["route", "google", "github"] }
+  socialite = { <source>, features = ["route", "google", "github", "configured"] }
 
+  config/default.toml   [socialite.google]   # a provider is on when its section is present
+                        client_id = "required_env(GOOGLE_CLIENT_ID)"
+                        client_secret = "required_secret_env(GOOGLE_CLIENT_SECRET)"
+                        redirect_url = "env(GOOGLE_REDIRECT_URL, http://localhost:3000/auth/google/callback)"
+  src/config.rs         #[serde(default)] pub socialite: Social,   in Config, with
+                        #[derive(serde::Deserialize, Default)] #[serde(deny_unknown_fields)]
+                        pub struct Social { pub google: Option<socialite::ProviderConfig> }
   src/main.rs           mod social;
+                        let Loaded { value: mut cfg, listing } = Config::load()?;   // `mut`, to take the providers
                         let mut r = routes::register(Router::new());
                         let mut enabled: Vec<&'static str> = Vec::new();
-                        if let (Ok(id), Ok(secret)) = (std::env::var("GOOGLE_CLIENT_ID"), std::env::var("GOOGLE_CLIENT_SECRET")) {
-                            let cb = format!("{}/auth/google/callback", std::env::var("APP_URL").unwrap_or_default());
-                            socialite::routes(&mut r, socialite::Google::new(id, secret, cb), handlers::social::callback);
+                        let providers = std::mem::take(&mut cfg.socialite);
+                        if let Some(google) = providers.google {
+                            socialite::routes(&mut r, socialite::Google::from_config(google).map_err(config_error)?, handlers::social::callback);
                             enabled.push("google");
                         }
                         // ... the same per provider; then share the list with every page:

@@ -29,15 +29,14 @@ pub struct Config {
     pub session: session::Config, // session feature `configured`
 }
 
-let loaded = configured::load::<Config>("config")?;
-println!("{}", loaded.show()); // for config:show; secrets masked
-let cfg = loaded.value;
+let Loaded { value: cfg, listing } = configured::load::<Config>("config")?;
+println!("{}", listing.show()); // for config:show; secrets print as <redacted>
 ```
 
 `load` reads `.env` (never overriding set vars), then `<dir>/default.{toml,yaml,yml,json}`
 (required), then `<dir>/<APP_ENV>.*` (optional, overrides key by key).
 
-| Form | Var unset or empty | Masked |
+| Form | Var unset or empty | Redacted |
 | --- | --- | --- |
 | `env(NAME)` | key left out: the field default applies | no |
 | `env(NAME, fallback)` | `fallback` | no |
@@ -48,8 +47,10 @@ let cfg = loaded.value;
 - Every missing var and malformed form is reported at once, each with its config path.
 - A malformed form (`env(X`, `required_env(X, d)`) is an error, never a literal.
 - Env values fill typed fields (`u16`, `bool`); durations are `"90s"`, `"2h"`, `"14d"`.
-- Secret values never appear in `show()` or in error messages. Keys named `*_key`,
-  `*_secret`, `*_password`, `*_token` and URL passwords are masked too.
+- Secret values never appear in `listing.show()` (they print as `<redacted>`) or in error messages.
+  Keys named `*_key`, `*_secret`, `*_password`, `*_token` and URL passwords are redacted too.
+  `listing.show_secret_values()` prints the real values, for an explicit `--print-secret-values`.
+- The listing has the keys set in files or env vars; omitted keys keep defaults and are not listed.
 - No blanket environment source: only `env(...)` reads env vars.
 
 For library crates: depend with `default-features = false` (no config-rs) and derive through

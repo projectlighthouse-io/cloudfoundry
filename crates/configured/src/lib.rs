@@ -25,7 +25,7 @@
 //! }
 //!
 //! let loaded = configured::load::<Config>("config")?;
-//! println!("{}", loaded.show()); // secrets masked
+//! println!("{}", loaded.listing.show()); // secrets print as <redacted>
 //! let cfg = loaded.value;
 //! ```
 
@@ -33,7 +33,7 @@
 mod load;
 
 #[cfg(feature = "load")]
-pub use load::{Error, Loaded, load};
+pub use load::{Error, Listing, Loaded, load};
 pub use secrecy::{ExposeSecret, SecretString};
 /// For `#[serde(crate = "configured::serde")]`: crates derive through this
 /// re-export and need no `serde` dependency of their own.

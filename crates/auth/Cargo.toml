@@ -1,6 +1,6 @@
 [package]
 name = "auth"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.85"
 description = "Know who the current user is, and guard routes"
@@ -115,7 +115,10 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         });
 
 Then run `art migrate`. Reset links are logged until you send them by mail
-(`send_reset_link` in src/handlers/password_reset.rs); set APP_URL to your frontend."""
+(`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
+config/default.toml (`env(APP_URL, ...)`): point it at your frontend.
+Optional: `[auth]` and `[limits.login]` sections (`auth::Config`, `throttle::FixedWindow`,
+feature `configured`), applied with `.config(cfg.auth.clone())?` and `Limiter::memory(cfg.limits.login)`."""
 with-ui-notes = """
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
@@ -141,7 +144,10 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         });
 
 Then run `art migrate`. Reset links are logged until you send them by mail
-(`send_reset_link` in src/handlers/password_reset.rs); set APP_URL for the link."""
+(`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
+config/default.toml (`env(APP_URL, ...)`).
+Optional: `[auth]` and `[limits.login]` sections (`auth::Config`, `throttle::FixedWindow`,
+feature `configured`), applied with `.config(cfg.auth.clone())?` and `Limiter::memory(cfg.limits.login)`."""
 
 [lints]
 workspace = true

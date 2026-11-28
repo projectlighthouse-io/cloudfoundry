@@ -171,13 +171,12 @@ pub async fn not_a_member(db: &Db<Primary>, target: teams::Target<TeamRole, OrgR
 }
 
 /// The accept link. Anyone logged in with the invited email can open it.
-pub fn invitation_link(token: &str) -> String {
-    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
-    format!("{base}/invitations/{token}")
+pub fn invitation_link(app_url: &str, token: &str) -> String {
+    format!("{app_url}/invitations/{token}")
 }
 
 /// Logged for local development only: anyone who reads the log can join.
 /// Send it by mail instead.
-pub fn send_invitation(email: &str, token: &str) {
-    tracing::info!("invitation link for {email}: {}", invitation_link(token));
+pub fn send_invitation(app_url: &str, email: &str, token: &str) {
+    tracing::info!("invitation link for {email}: {}", invitation_link(app_url, token));
 }

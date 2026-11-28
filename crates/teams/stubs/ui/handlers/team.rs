@@ -67,8 +67,8 @@ pub struct SentLink {
 
 const SENT_LINK: &str = "teams.invitation_link";
 
-fn flash_link(session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
-    let link = SentLink { id: new.invitation.id, url: access::invitation_link(&new.token) };
+fn flash_link(app_url: &str, session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
+    let link = SentLink { id: new.invitation.id, url: access::invitation_link(app_url, &new.token) };
     if let Err(e) = session.flash(SENT_LINK, &link) {
         tracing::error!("flashing the invitation link: {e}");
     }
@@ -225,16 +225,16 @@ pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Ses
     let target = Target::Team { team: can.team.id, role: input.role };
     access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&new.invitation.email, &new.token);
-    flash_link(&session, &new);
+    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.team))
 }
 
 /// A new link and a fresh lifetime; the old link stops working.
 pub async fn resend(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Session, Path(path): Path<InvitationPath>) -> Result<Redirect> {
     let new = access::teams(&cx.db).resend_team_invitation(&can.team, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&new.invitation.email, &new.token);
-    flash_link(&session, &new);
+    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.team))
 }
 

@@ -28,6 +28,16 @@ pub struct GitHubUser {
 }
 
 impl GitHub {
+    /// From config: credentials, optional scopes. See [`crate::ProviderConfig`].
+    #[cfg(feature = "configured")]
+    pub fn from_config(cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(NAME, crate::config::Base::Unsupported)?;
+        let mut s = Self::new(p.id, p.secret, p.redirect);
+        if let Some(scopes) = p.scopes {
+            s.oauth.scopes = scopes;
+        }
+        Ok(s)
+    }
     pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>, redirect_url: impl Into<String>) -> Self {
         Self { oauth: OAuth2::new(client_id, client_secret, redirect_url), api: String::new() }.base_urls("https://github.com", "https://api.github.com")
     }
@@ -50,7 +60,7 @@ impl GitHub {
 impl Provider for GitHub {
     type User = GitHubUser;
     fn name(&self) -> &'static str {
-        "github"
+        NAME
     }
 
     fn oauth(&self) -> &OAuth2 {
@@ -112,3 +122,5 @@ impl From<GitHubUser> for SocialUser {
         }
     }
 }
+
+const NAME: &str = "github";

@@ -34,6 +34,7 @@ fn allowed(remaining: u64) -> Decision {
 /// At most `max` hits per `window`, counted from a key's first hit. Simple and
 /// cheap; allows up to `2 * max` across a window boundary.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "configured", derive(configured::serde::Deserialize), serde(crate = "configured::serde", try_from = "WindowConfig"))]
 pub struct FixedWindow {
     max: u64,
     window: i64,
@@ -60,6 +61,7 @@ impl Algorithm for FixedWindow {
 /// previous fixed windows (the previous one weighted by how much of it still
 /// overlaps). Smooth at window boundaries; stores three integers.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "configured", derive(configured::serde::Deserialize), serde(crate = "configured::serde", try_from = "WindowConfig"))]
 pub struct SlidingWindow {
     max: u64,
     window: i64,
@@ -106,6 +108,7 @@ impl Algorithm for SlidingWindow {
 /// Each hit takes one. Allows bursts up to `capacity`, then a steady rate. The
 /// usual choice for calls to an external API.
 #[derive(Clone, Copy, Debug)]
+#[cfg_attr(feature = "configured", derive(configured::serde::Deserialize), serde(crate = "configured::serde", try_from = "BucketConfig"))]
 pub struct TokenBucket {
     capacity: f64,
     /// Tokens per millisecond.
@@ -132,8 +135,88 @@ impl Algorithm for TokenBucket {
         }
         let left = tokens - cost;
         // Once refilled to capacity the state is the same as none at all.
-        let full_at = now + ((self.capacity - left) / self.rate).ceil() as i64 + 1;
+        // Saturating: a zero refill rate makes this infinite (`as` gives i64::MAX).
+        let full_at = now.saturating_add(((self.capacity - left) / self.rate).ceil() as i64).saturating_add(1);
         (allowed(left as u64), Some((encode([left.to_bits() as i64, now]), full_at)))
+    }
+}
+
+/// Config form of `FixedWindow` / `SlidingWindow` (feature `configured`):
+/// `max = 5`, `window = "1m"`.
+#[cfg(feature = "configured")]
+#[derive(configured::serde::Deserialize)]
+#[serde(crate = "configured::serde", deny_unknown_fields)]
+struct WindowConfig {
+    max: u64,
+    #[serde(with = "configured::duration")]
+    window: Duration,
+}
+
+/// Config form of `TokenBucket`: `capacity = 60`, `refill = 1`, `every = "1s"`.
+#[cfg(feature = "configured")]
+#[derive(configured::serde::Deserialize)]
+#[serde(crate = "configured::serde", deny_unknown_fields)]
+struct BucketConfig {
+    capacity: u64,
+    refill: u64,
+    #[serde(with = "configured::duration")]
+    every: Duration,
+}
+
+/// A limit from config that would deny everything or never refill.
+#[cfg(feature = "configured")]
+#[derive(Debug)]
+pub struct ConfigError(&'static str);
+
+#[cfg(feature = "configured")]
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "throttle config: {}", self.0)
+    }
+}
+
+#[cfg(feature = "configured")]
+impl std::error::Error for ConfigError {}
+
+#[cfg(feature = "configured")]
+fn check_window(c: &WindowConfig) -> Result<(), ConfigError> {
+    if c.max == 0 {
+        return Err(ConfigError("max must be at least 1"));
+    }
+    // Windows are kept in whole milliseconds.
+    if c.window < Duration::from_millis(1) {
+        return Err(ConfigError("window must be at least 1ms"));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "configured")]
+impl TryFrom<WindowConfig> for FixedWindow {
+    type Error = ConfigError;
+    fn try_from(c: WindowConfig) -> Result<Self, ConfigError> {
+        check_window(&c).map(|()| Self::new(c.max, c.window))
+    }
+}
+
+#[cfg(feature = "configured")]
+impl TryFrom<WindowConfig> for SlidingWindow {
+    type Error = ConfigError;
+    fn try_from(c: WindowConfig) -> Result<Self, ConfigError> {
+        check_window(&c).map(|()| Self::new(c.max, c.window))
+    }
+}
+
+#[cfg(feature = "configured")]
+impl TryFrom<BucketConfig> for TokenBucket {
+    type Error = ConfigError;
+    fn try_from(c: BucketConfig) -> Result<Self, ConfigError> {
+        if c.capacity == 0 || c.refill == 0 {
+            return Err(ConfigError("capacity and refill must be at least 1"));
+        }
+        if c.every < Duration::from_millis(1) {
+            return Err(ConfigError("every must be at least 1ms"));
+        }
+        Ok(Self::new(c.capacity, c.refill, c.every))
     }
 }
 

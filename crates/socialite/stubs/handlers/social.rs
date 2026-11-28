@@ -9,10 +9,10 @@ use socialite::SocialCallback;
 
 use crate::{social::SocialError, state::App, users::{User, Users}};
 
-/// Logs the user in and sends them to your frontend (APP_URL). On failure the
+/// Logs the user in and sends them to your frontend (`app_url` in config). On failure the
 /// reason is in the `social_error` query parameter.
 pub async fn callback(cx: Cx<App>, auth: Auth<User>, social: SocialCallback) -> Redirect {
-    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+    let base = &cx.cfg.app_url;
     let social = match social.0 {
         Ok(s) => s,
         Err(e) => {

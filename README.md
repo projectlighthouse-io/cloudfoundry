@@ -14,7 +14,7 @@ art new myapp --git https://github.com/projectlighthouse-io/toolkit
 | --- | --- |
 | [`route`](crates/route) | Match a request to a handler; named routes, groups, tower layers |
 | [`db`](crates/db) | Typed `sqlx` pool handles, explicit transactions, pool settings |
-| [`configured`](crates/configured) | Typed app config from TOML/YAML/JSON with `env(...)` values and masked secrets (wraps `config-rs`) |
+| [`configured`](crates/configured) | Typed app config from TOML/YAML/JSON with `env(...)` values and redacted secrets (wraps `config-rs`) |
 | [`command`](crates/command) | Named commands in the app binary |
 | [`action`](crates/action) | One trait for a unit of application logic |
 | [`validate`](crates/validate) | `Validate`, `Valid<T>`, field errors |

@@ -128,14 +128,14 @@ pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, input: Valid
     let target = Target::Team { team: can.team.id, role: input.role };
     access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&new.invitation.email, &new.token);
+    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }
 
 /// A new link and a fresh lifetime; the old link stops working.
 pub async fn resend(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, Path(path): Path<InvitationPath>) -> Result<impl IntoResponse> {
     let new = access::teams(&cx.db).resend_team_invitation(&can.team, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&new.invitation.email, &new.token);
+    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }
 

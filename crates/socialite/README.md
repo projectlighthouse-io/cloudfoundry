@@ -18,6 +18,7 @@ socialite = { git = "https://github.com/projectlighthouse-io/toolkit", features 
 | `oidc` | `Oidc::discover(name, issuer, ...)` or `Oidc::new(name, ..., endpoints)` |
 | `auth0` | `Auth0::new(domain, ...)` (implies `oidc`) |
 | `route` | `socialite::routes(&mut r, provider, callback)` and the `SocialCallback` input |
+| `configured` | `ProviderConfig` (secret as `SecretString`), `GitHub::from_config(cfg)?` etc., `Oidc::discover_config(name, cfg).await?`; `base_url` is the Auth0 tenant / OIDC issuer / GitLab host |
 
 ```rust
 use socialite::{Google, Provider};
@@ -53,7 +54,7 @@ With feature `route`, `socialite::routes(&mut r, google, handlers::social::callb
 > with that provider sign in as them. `src/social.rs` only links or creates by verified email; keep
 > `TRUST_UNVERIFIED_EMAILS = false`. For GitHub, request the `user:email` scope so its verified
 > primary email can be read.
-- `src/handlers/social.rs`: the callback (JSON apps redirect to `APP_URL`; `--with-ui` shows errors on
+- `src/handlers/social.rs`: the callback (JSON apps redirect to `app_url` from config; `--with-ui` shows errors on
   the login page) and, with `--with-ui`, `SocialButtons.vue`.
 - Migrations: `social_accounts`, and `users.password_hash` made nullable (on SQLite by rebuilding the
   table; list your columns there if you changed `users`).

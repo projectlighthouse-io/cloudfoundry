@@ -68,6 +68,21 @@ impl Oidc {
         Ok(Self::new(name, client_id, client_secret, redirect_url, d.authorization_endpoint, d.token_endpoint, d.userinfo_endpoint))
     }
 
+    /// [`Oidc::discover`] from config: `base_url` is the issuer (required).
+    /// A failed discovery is a [`crate::ConfigError`] too: both stop startup.
+    #[cfg(feature = "configured")]
+    pub async fn discover_config(name: &'static str, cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(name, crate::config::Base::Required)?;
+        let issuer = p.base.unwrap_or_default();
+        let mut s = Self::discover(name, &issuer, p.id, p.secret, p.redirect)
+            .await
+            .map_err(|e| crate::ConfigError(format!("{name}: discovery at {issuer} failed: {e}")))?;
+        if let Some(scopes) = p.scopes {
+            s.oauth.scopes = scopes;
+        }
+        Ok(s)
+    }
+
     pub fn scopes(mut self, scopes: &[&str]) -> Self {
         self.oauth.scopes = scopes.iter().map(|s| s.to_string()).collect();
         self

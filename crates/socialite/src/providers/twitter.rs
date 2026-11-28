@@ -24,6 +24,16 @@ pub struct TwitterUser {
 }
 
 impl Twitter {
+    /// From config: credentials, optional scopes. See [`crate::ProviderConfig`].
+    #[cfg(feature = "configured")]
+    pub fn from_config(cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(NAME, crate::config::Base::Unsupported)?;
+        let mut s = Self::new(p.id, p.secret, p.redirect);
+        if let Some(scopes) = p.scopes {
+            s.oauth.scopes = scopes;
+        }
+        Ok(s)
+    }
     /// Default scopes: `users.read tweet.read` (X needs both to read the user).
     /// Add `offline.access` for a refresh token.
     pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>, redirect_url: impl Into<String>) -> Self {
@@ -52,7 +62,7 @@ impl Provider for Twitter {
     type User = TwitterUser;
 
     fn name(&self) -> &'static str {
-        "twitter"
+        NAME
     }
 
     fn oauth(&self) -> &OAuth2 {
@@ -86,3 +96,5 @@ impl From<TwitterUser> for SocialUser {
         }
     }
 }
+
+const NAME: &str = "twitter";

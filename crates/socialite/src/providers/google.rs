@@ -36,6 +36,16 @@ pub struct GoogleUser {
 }
 
 impl Google {
+    /// From config: credentials, optional scopes. See [`crate::ProviderConfig`].
+    #[cfg(feature = "configured")]
+    pub fn from_config(cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(NAME, crate::config::Base::Unsupported)?;
+        let mut s = Self::new(p.id, p.secret, p.redirect);
+        if let Some(scopes) = p.scopes {
+            s.oauth.scopes = scopes;
+        }
+        Ok(s)
+    }
     /// Default scopes: `openid email profile`.
     pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>, redirect_url: impl Into<String>) -> Self {
         let mut oauth = OAuth2::new(client_id, client_secret, redirect_url);
@@ -84,7 +94,7 @@ impl Google {
 impl Provider for Google {
     type User = GoogleUser;
     fn name(&self) -> &'static str {
-        "google"
+        NAME
     }
 
     fn oauth(&self) -> &OAuth2 {
@@ -133,3 +143,5 @@ impl From<GoogleUser> for SocialUser {
         }
     }
 }
+
+const NAME: &str = "google";

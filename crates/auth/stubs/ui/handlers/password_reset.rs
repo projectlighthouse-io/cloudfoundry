@@ -20,7 +20,7 @@ pub async fn request(_: ()) -> inertia::Page<Forgot> {
 pub async fn email(cx: Cx<App>, input: Valid<Json<ForgotPassword>>) -> Result<inertia::Page<Forgot>, Response<Body>> {
     let users = Users { db: cx.db.clone() };
     match auth::reset_link_token(&users, &input.email).await {
-        Ok((user, token)) => send_reset_link(&user, &token),
+        Ok((user, token)) => send_reset_link(&cx.cfg.app_url, &user, &token),
         Err(ResetError::UnknownUser | ResetError::Throttled) => {}
         Err(e) => return Err(server_error(e)),
     }
@@ -29,8 +29,7 @@ pub async fn email(cx: Cx<App>, input: Valid<Json<ForgotPassword>>) -> Result<in
 }
 
 /// Replace with your mailer. The link works for an hour (`auth::RESET_EXPIRES`).
-fn send_reset_link(user: &User, token: &str) {
-    let base = std::env::var("APP_URL").unwrap_or_else(|_| "http://localhost:3000".into());
+fn send_reset_link(base: &str, user: &User, token: &str) {
     let email: String = user
         .email
         .bytes()

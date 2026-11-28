@@ -55,7 +55,8 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         .replace("{vite}", &source.dep("vite"))
         .replace("{queue}", &source.dep("queue"))
         .replace("{event}", &source.dep("event"))
-        .replace("{sse}", &source.dep("sse"));
+        .replace("{sse}", &source.dep("sse"))
+        .replace("{configured}", &source.dep("configured"));
     let flag = if driver == "postgres" { String::new() } else { format!(" --driver {driver}") };
     let agents = AGENTS.replace("{driver}", driver).replace("{flag}", &flag);
     let url = database_url(driver, name);
@@ -74,6 +75,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         ("src/main.rs", MAIN),
         ("src/state.rs", STATE),
         ("src/config.rs", CONFIG),
+        ("config/default.toml", DEFAULT_TOML),
         ("src/error.rs", ERROR),
         ("src/routes.rs", ROUTES),
         ("src/handlers/mod.rs", HANDLERS),
@@ -145,6 +147,7 @@ Trust the docs over memory: these crates are not in most training data.
 | Path | What |
 | --- | --- |
 | `src/main.rs` | Wiring: config, database, layers (session, CSRF, auth, Inertia), routes, commands |
+| `config/default.toml` | Settings, one section per crate (`[session]`, `[db]`, ...); `config/<APP_ENV>.toml` overrides. Secrets via `required_secret_env(NAME)`, never literals; `art config:show` prints them as `<redacted>` (`--print-secret-values` to reveal) |
 | `src/routes.rs` | Every route, with names; `art route:list` prints them |
 | `src/handlers/` | Async functions: typed inputs (`Cx<App>`, `Path`, ..., the body last), one output |
 | `src/requests/` | Input structs with `#[derive(Validate)]` rules |
@@ -175,6 +178,7 @@ Trust the docs over memory: these crates are not in most training data.
 - Validate input with `Valid<Json<T>>` / `Valid<Form<T>>`. Request structs in `src/requests/` use
   `#[derive(Validate)]` with `#[validate(required, max = 255)]`-style attributes; own rules implement
   `validate::Rule`.
+- Config lives in `config/*.toml`, read by `configured` into `src/config.rs`. Add a setting as a field there and a key in `config/default.toml`; read env vars only through `env(...)` forms, never `std::env::var` in app code.
 - Refer to routes by name (`Redirect::to_route("dashboard")`), not by path.
 - Files copied by `art publish` are app code: edit them freely; upgrading a crate never touches them.
 - After changing Rust code, run `cargo check`; after changing page props, `art dev` re-exports the types.
@@ -188,20 +192,20 @@ edition = "2024"
 [dependencies]
 action = { {action} }
 command = { {command}, features = ["action"] }
-db = { {db}, features = ["postgres"] }
+configured = { {configured} }
+db = { {db}, features = ["postgres", "configured"] }
 route = { {route}, features = ["server", "command", "action"] }
 validate = { {validate}, features = ["route"] }
-csrf = { {csrf}, features = ["route"] }
+csrf = { {csrf}, features = ["route", "configured"] }
 securecookie = { {securecookie} }
-session = { {session}, features = ["postgres", "route", "csrf", "command"] }
-inertia = { {inertia}, features = ["validate", "ssr"] }
+session = { {session}, features = ["postgres", "route", "csrf", "command", "configured"] }
+inertia = { {inertia}, features = ["validate", "ssr", "configured"] }
 vite = { {vite} }
-queue = { {queue}, features = ["postgres", "command"] }
+queue = { {queue}, features = ["postgres", "command", "configured"] }
 event = { {event}, features = ["queue", "command"] }
 sse = { {sse}, features = ["route"] }
 
 clap = { version = "4", features = ["derive"] }
-dotenvy = "0.15"
 serde = { version = "1", features = ["derive"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres", "macros", "migrate"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -258,7 +262,9 @@ use tower_http::services::ServeDir;
 use vite::Vite;
 use tracing_subscriber::EnvFilter;
 
-use crate::{config::Config, error::AppError, state::{App, Primary}};
+use configured::{ExposeSecret, Loaded};
+
+use crate::{config::Config, error::{AppError, config_error}, state::{App, Primary}};
 
 #[tokio::main]
 async fn main() -> Result<(), AppError> {
@@ -266,37 +272,34 @@ async fn main() -> Result<(), AppError> {
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .init();
 
-    let cfg = Config::from_env()?;
-    let codec = Codec::new(Keys::parse(&cfg.app_key).map_err(|e| AppError::Config(format!("APP_KEY: {e}")))?);
+    let Loaded { value: cfg, listing } = Config::load()?;
+    let codec = Codec::new(Keys::parse(cfg.app_key.expose_secret()).map_err(|e| AppError::Config(format!("config: app_key: {e}")))?);
 
-    let vite = Vite::load("public", &["resources/js/app.ts"]).map_err(|e| AppError::Config(e.to_string()))?;
+    let vite = Vite::load("public", &["resources/js/app.ts"]).map_err(|e| AppError::Config(format!("vite: {e}")))?;
     let asset_version = vite.manifest_hash().to_owned();
 
-    let db: Db<Primary> = Db::connect(&cfg.database_url).await?;
+    let db: Db<Primary> = Db::connect_with(&cfg.database_url, &cfg.db).await?;
     let sessions = PostgresStore::new(db.pool().clone());
 
     let queue = Queue::new(queue::PostgresStore::new(db.pool().clone()));
     let events = Arc::new(events::register(Events::builder().queue(&queue)).build());
 
+    // Checked now so a bad [queue] fails at startup, not when `queue:work` starts.
+    cfg.queue.check().map_err(config_error)?;
     let app = App::new(cfg, db, queue.clone(), events.clone());
+    let c = &app.cfg;
 
-    let mut pages = inertia::layer()
-        .root_template("resources/views/app.html")
-        .pages_dir("resources/js/pages")
-        .version(&asset_version)
-        .head(move || vite.tags());
-    if let Some(url) = &app.cfg.ssr_url {
-        pages = pages.ssr(url);
-    }
+    let pages = inertia::layer().config(c.inertia.clone()).map_err(config_error)?.version(&asset_version).head(move || vite.tags());
 
     let router = routes::register(Router::new())
-        .layer(session::layer(sessions.clone(), codec))
-        .layer(csrf::layer::<Session>())
+        .layer(session::layer(sessions.clone(), codec).config(c.session.clone()).map_err(config_error)?)
+        .layer(csrf::layer::<Session>().config(c.csrf.clone()))
         .layer(pages)
         .fallback(ServeDir::new("public"))
         .build(app.clone())?;
 
-    commands::register(&router, sessions, queue, events).run(app, std::env::args()).await;
+    let worker = app.cfg.queue.clone();
+    commands::register(&router, sessions, queue, events, worker, listing).run(app, std::env::args()).await;
     Ok(())
 }
 "#;
@@ -330,56 +333,109 @@ impl App {
 }
 "#;
 
-const CONFIG: &str = r#"use crate::{error::AppError, state::App};
+/// `config/default.toml`. Commented keys show the defaults.
+const DEFAULT_TOML: &str = r#"# Config for every environment; config/<APP_ENV>.toml overrides keys from here.
+# env(NAME), env(NAME, default), required_env(NAME), secret_env(NAME) and
+# required_secret_env(NAME) read environment variables (and .env); a missing
+# required one stops startup. `config:show` prints the result with secrets
+# as <redacted>; `config:show --print-secret-values` reveals them.
+# Docs: https://toolkit.projectlighthouse.io/docs/crates/configured.md
 
-/// Typed config, read once from the environment (and `.env` if present).
+app_name = "env(APP_NAME, {name})"
+app_url = "env(APP_URL, http://localhost:3000)"   # no trailing /
+app_key = "required_secret_env(APP_KEY)"
+database_url = "required_env(DATABASE_URL)"
+
+[session]
+# cookie_name = "session"
+# lifetime = "14d"
+# same_site = "lax"   # strict | lax | none
+# secure = true
+
+[csrf]
+# secure = true
+
+[inertia]
+root_template = "resources/views/app.html"
+pages_dir = "resources/js/pages"
+ssr_url = "env(INERTIA_SSR_URL)"
+# ssr_timeout = "2s"
+# encrypt_history = false
+
+[queue]
+# queues = ["default"]
+# concurrency = 4
+# visibility = "5m"
+# poll = "1s"
+
+[db]
+# max_connections = 10
+# min_connections = 0
+# acquire_timeout = "30s"
+# idle_timeout = "10m"   # or "never"
+# max_lifetime = "30m"   # or "never"
+"#;
+
+const CONFIG: &str = r#"use configured::{Listing, Loaded, SecretString};
+
+use crate::{error::{AppError, config_error}, state::App};
+
+/// Typed config from `config/default.toml` (and `config/<APP_ENV>.toml`),
+/// with `env(...)` values read from the environment and `.env`.
+/// Sections are the crates' own `Config` types; missing keys keep defaults.
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     pub app_name: String,
-    pub app_key: String,
+    /// Public base URL for links in mail and redirects, without a trailing `/`.
+    // Read by the handlers `art publish auth` / `socialite` / `teams` add.
+    #[allow(dead_code)]
+    pub app_url: String,
+    pub app_key: SecretString,
     pub database_url: String,
-    /// The Inertia SSR server, e.g. `http://127.0.0.1:13714`. Unset: render on the client.
-    pub ssr_url: Option<String>,
+
+    #[serde(default)]
+    pub session: session::Config,
+
+    #[serde(default)]
+    pub csrf: csrf::Config,
+
+    #[serde(default)]
+    pub inertia: inertia::Config,
+
+    #[serde(default)]
+    pub queue: queue::WorkerConfig,
+
+    #[serde(default)]
+    pub db: db::PoolConfig,
 }
 
 impl Config {
-    pub fn from_env() -> Result<Self, AppError> {
-        let _ = dotenvy::dotenv();
-        Ok(Self {
-            app_name: std::env::var("APP_NAME").unwrap_or_else(|_| "{name}".into()),
-            app_key: required("APP_KEY")?,
-            database_url: required("DATABASE_URL")?,
-            ssr_url: std::env::var("INERTIA_SSR_URL").ok().filter(|u| !u.is_empty()),
-        })
+    /// Fails with every missing env var and bad key listed.
+    pub fn load() -> Result<Loaded<Self>, AppError> {
+        configured::load("config").map_err(config_error)
     }
-}
-
-fn required(key: &str) -> Result<String, AppError> {
-    std::env::var(key).map_err(|_| AppError::Config(format!("{key} is not set")))
 }
 
 #[derive(clap::Args)]
-pub struct ShowArgs {}
-
-/// `config:show`: the resolved config, secrets masked.
-pub async fn show(app: &App, _: ShowArgs) -> Result<(), AppError> {
-    let c = &app.cfg;
-    let secret = |s: &str| if s.is_empty() { "(empty)".to_owned() } else { "********".to_owned() };
-    for (key, value) in [
-        ("APP_NAME", c.app_name.clone()),
-        ("APP_KEY", secret(&c.app_key)),
-        ("DATABASE_URL", mask_password(&c.database_url)),
-    ] {
-        println!("{key:14}{value}");
-    }
-    Ok(())
+pub struct ShowArgs {
+    /// Print secret values instead of `<redacted>`.
+    #[arg(long)]
+    pub print_secret_values: bool,
 }
 
-/// `scheme://user:password@host/db` -> `scheme://user:********@host/db`.
-fn mask_password(url: &str) -> String {
-    let (Some(scheme), Some(at)) = (url.find("://"), url.rfind('@')) else { return url.to_owned() };
-    match url[scheme + 3..at].split_once(':') {
-        Some((user, _)) => format!("{}{user}:********{}", &url[..scheme + 3], &url[at..]),
-        None => url.to_owned(),
+/// `config:show`: the keys loaded at startup. Secrets print as `<redacted>`
+/// unless `--print-secret-values` is passed. Commands receive `&App`; this
+/// one needs only the listing it captured.
+pub fn show(listing: Listing) -> impl AsyncFnOnce(&App, ShowArgs) -> Result<(), AppError> {
+    async move |_: &App, args: ShowArgs| {
+        if args.print_secret_values {
+            eprintln!("warning: printing secret values");
+            print!("{}", listing.show_secret_values());
+        } else {
+            print!("{}", listing.show());
+        }
+        Ok(())
     }
 }
 "#;
@@ -388,7 +444,6 @@ const ERROR: &str = r#"use std::fmt;
 
 use route::{Body, IntoResponse, http::{Response, StatusCode}};
 
-#[derive(Debug)]
 pub enum AppError {
     Config(String),
     Db(sqlx::Error),
@@ -398,14 +453,26 @@ pub enum AppError {
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Config(msg) => write!(f, "config: {msg}"),
+            Self::Config(msg) => f.write_str(msg),
             Self::Db(e) => write!(f, "database: {e}"),
             Self::Routes(e) => write!(f, "routes: {e}"),
         }
     }
 }
 
+/// `main` prints errors with `Debug`: show the readable message.
+impl fmt::Debug for AppError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}
+
 impl std::error::Error for AppError {}
+
+/// A startup config failure. The crates' config errors already name their section.
+pub fn config_error(e: impl fmt::Display) -> AppError {
+    AppError::Config(e.to_string())
+}
 
 impl From<sqlx::Error> for AppError {
     fn from(e: sqlx::Error) -> Self {
@@ -469,15 +536,20 @@ pub fn register(
     sessions: session::PostgresStore,
     queue: Queue<queue::PostgresStore>,
     events: Arc<Events<App>>,
+    worker: queue::WorkerConfig,
+    listing: configured::Listing,
 ) -> Commands<App> {
     Commands::new()
         .default("serve", route::command::serve(routes))
         .add("route:list", route::command::list(routes))
-        .add("config:show", crate::config::show)
+        .add("config:show", crate::config::show(listing))
         .add("session:prune", session::command::prune(sessions))
         .add("event:list", event::command::list(&events))
         .add("queue:retry", queue::command::retry(queue.clone()))
-        .add("queue:work", queue::command::work(queue, move |w| crate::jobs::register(events.register_jobs(w))))
+        // `main` checked `worker`; `--queue` / `--concurrency` still override it.
+        .add("queue:work", queue::command::work(queue, move |w| {
+            crate::jobs::register(events.register_jobs(w)).config(worker).expect("[queue] was checked at startup")
+        }))
 }
 "#;
 

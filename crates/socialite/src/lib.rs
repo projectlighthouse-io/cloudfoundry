@@ -42,7 +42,11 @@ use serde::Deserialize;
 use session::Session;
 use sha2::{Digest, Sha256};
 
+#[cfg(feature = "configured")]
+mod config;
 mod providers;
+#[cfg(feature = "configured")]
+pub use config::{ConfigError, ProviderConfig};
 #[cfg(feature = "route")]
 mod route;
 #[cfg(feature = "route")]

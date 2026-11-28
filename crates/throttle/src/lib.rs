@@ -32,6 +32,8 @@ use std::{
 };
 
 mod algorithms;
+#[cfg(feature = "configured")]
+pub use algorithms::ConfigError;
 pub use algorithms::{FixedWindow, SlidingWindow, TokenBucket};
 #[cfg(feature = "command")]
 pub mod command;

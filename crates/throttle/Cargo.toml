@@ -1,11 +1,12 @@
 [package]
 name = "throttle"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Rate limit anything per key, with a choice of algorithm"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 tokio = { version = "1", features = ["time"] }
 
 clap = { version = "4", features = ["derive"], optional = true }
@@ -24,8 +25,12 @@ mysql = ["dep:sqlx", "sqlx/mysql"]
 route = ["dep:route", "dep:tower", "dep:tracing"]
 # `throttle::command::prune` for `throttle:prune`.
 command = ["dep:clap"]
+# `FixedWindow`, `SlidingWindow` and `TokenBucket` deserialize from config (`max = 5`, `window = "1m"`).
+configured = ["dep:configured"]
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
 http-body-util = "0.1"
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
 
@@ -44,6 +49,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] 
 [package.metadata.art]
 agents = """
 - `throttle::layer(name, Limiter::memory(...), throttle::by_ip)` limits a route group; a memory limiter counts per process, so use a SQL store when several servers run.
+- Limits can live in config: `throttle::FixedWindow` etc. deserialize (feature `configured`).
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/throttle.md"""
 notes = "Run `art migrate` to create the throttle table. Prune expired keys with `throttle:prune` (feature `command`)."
 

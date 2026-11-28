@@ -37,3 +37,12 @@ r.layer(throttle::layer("api", Limiter::memory(SlidingWindow::new(60, Duration::
 or `mysql`, run `art publish throttle [--driver sqlite|mysql]` and `art migrate`, then
 `Limiter::new(throttle::PostgresStore::new(pool), algorithm)`. Feature `command` adds
 `throttle::command::prune` for `throttle:prune`.
+
+With feature `configured`, the algorithms deserialize from config (via the `configured` crate);
+`max = 0`, `refill = 0` or a zero window fail to load:
+
+```toml
+[limits.login]
+max = 5
+window = "1m"
+```

@@ -28,6 +28,19 @@ pub struct GitLabUser {
 }
 
 impl GitLab {
+    /// From config: credentials, optional scopes, base_url. See [`crate::ProviderConfig`].
+    #[cfg(feature = "configured")]
+    pub fn from_config(cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(NAME, crate::config::Base::Optional)?;
+        let mut s = Self::new(p.id, p.secret, p.redirect);
+        if let Some(base) = p.base {
+            s = s.base_url(base);
+        }
+        if let Some(scopes) = p.scopes {
+            s.oauth.scopes = scopes;
+        }
+        Ok(s)
+    }
     /// Default scopes: `openid email profile`.
     pub fn new(client_id: impl Into<String>, client_secret: impl Into<String>, redirect_url: impl Into<String>) -> Self {
         let mut oauth = OAuth2::new(client_id, client_secret, redirect_url);
@@ -84,3 +97,5 @@ impl From<GitLabUser> for SocialUser {
         }
     }
 }
+
+const NAME: &str = "gitlab";

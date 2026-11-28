@@ -4,6 +4,17 @@ use crate::{Error, OAuth2, Oidc, OidcUser, Provider, Token};
 pub struct Auth0(Oidc);
 
 impl Auth0 {
+    /// From config: credentials, optional scopes, base_url. See [`crate::ProviderConfig`].
+    #[cfg(feature = "configured")]
+    pub fn from_config(cfg: crate::ProviderConfig) -> Result<Self, crate::ConfigError> {
+        let p = cfg.parts(NAME, crate::config::Base::Required)?;
+        let base = p.base.unwrap_or_default();
+        let s = Self::with_base(&base, p.id, p.secret, p.redirect);
+        Ok(match p.scopes {
+            Some(scopes) => s.scopes(&scopes.iter().map(String::as_str).collect::<Vec<_>>()),
+            None => s,
+        })
+    }
     /// `domain` is the tenant domain, e.g. `acme.eu.auth0.com` or a custom domain.
     pub fn new(domain: &str, client_id: impl Into<String>, client_secret: impl Into<String>, redirect_url: impl Into<String>) -> Self {
         Self::with_base(&format!("https://{domain}"), client_id, client_secret, redirect_url)
@@ -34,3 +45,5 @@ impl Provider for Auth0 {
         self.0.fetch_user(token).await
     }
 }
+
+const NAME: &str = "auth0";

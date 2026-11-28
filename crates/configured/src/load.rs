@@ -10,22 +10,52 @@ use serde::de::DeserializeOwned;
 
 /// Extensions config-rs reads with this crate's formats, in lookup order.
 const EXTENSIONS: [&str; 4] = ["toml", "json", "yaml", "yml"];
-const MASK: &str = "********";
+const MASK: &str = "<redacted>";
 
-/// A loaded config: the typed value, plus a masked view for `config:show`.
-/// Holds no secret values besides those inside `value`.
+/// A loaded config: the typed value, plus what was loaded, for `config:show`.
 pub struct Loaded<T> {
     pub value: T,
-    shown: Vec<(String, String)>,
+    pub listing: Listing,
 }
 
-impl<T> Loaded<T> {
-    /// Every resolved key, one per line, sorted. Values from `secret_env`
-    /// and keys named like a secret (`key`, `secret`, `password`, `token`)
-    /// are masked, as are passwords in URLs.
+/// Every key set in a file or by an env var, as loaded. Secret values are
+/// held as [`SecretString`] and printed only by [`Listing::show_secret_values`].
+pub struct Listing(Vec<Entry>);
+
+/// One key of the listing. `secret` is the real value when `shown` is redacted.
+struct Entry {
+    path: String,
+    shown: String,
+    secret: Option<SecretString>,
+}
+
+impl Listing {
+    /// Every key set in a file or by an env var, one per line, sorted (keys
+    /// left out keep their defaults and are not listed). Values from the
+    /// `secret_` forms and keys named like a secret (`*_key`, `*_secret`,
+    /// `*_password`, `*_token`) print as `<redacted>`, as do passwords in URLs.
     pub fn show(&self) -> String {
-        let width = self.shown.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
-        self.shown.iter().map(|(k, v)| format!("{k:width$}  {v}\n")).collect()
+        self.render(false)
+    }
+
+    /// [`Listing::show`] with the real secret values. Only for an explicit
+    /// request, such as `config:show --print-secret-values`.
+    pub fn show_secret_values(&self) -> String {
+        self.render(true)
+    }
+
+    fn render(&self, reveal: bool) -> String {
+        let width = self.0.iter().map(|e| e.path.len()).max().unwrap_or(0);
+        self.0
+            .iter()
+            .map(|e| {
+                let v = match &e.secret {
+                    Some(real) if reveal => real.expose_secret(),
+                    _ => &e.shown,
+                };
+                format!("{:width$}  {v}\n", e.path)
+            })
+            .collect()
     }
 }
 
@@ -114,12 +144,13 @@ fn load_from<T: DeserializeOwned>(dir: &Path, app_env: Option<&str>, lookup: Loo
     let mut r = Resolver { lookup, secrets: BTreeSet::new(), secret_values: Vec::new(), problems: Vec::new() };
     let tree = r.table(tree, "");
     if !r.problems.is_empty() {
+        r.problems.sort();
         return Err(Error::Env(r.problems));
     }
 
     let mut shown = Vec::new();
     flatten(&tree, "", &r.secrets, &mut shown);
-    shown.sort();
+    shown.sort_by(|a: &Entry, b: &Entry| a.path.cmp(&b.path));
     let value = Value::new(None, ValueKind::Table(tree)).try_deserialize::<T>().map_err(|e| {
         let mut msg = e.to_string();
         for s in &r.secret_values {
@@ -127,7 +158,7 @@ fn load_from<T: DeserializeOwned>(dir: &Path, app_env: Option<&str>, lookup: Loo
         }
         Error::Shape(msg)
     })?;
-    Ok(Loaded { value, shown })
+    Ok(Loaded { value, listing: Listing(shown) })
 }
 
 /// The one file named `<name>.<ext>`; an error when several formats exist,
@@ -238,14 +269,16 @@ impl Resolver<'_> {
     }
 }
 
-fn flatten(t: &Map<String, Value>, path: &str, secrets: &BTreeSet<String>, out: &mut Vec<(String, String)>) {
+fn flatten(t: &Map<String, Value>, path: &str, secrets: &BTreeSet<String>, out: &mut Vec<Entry>) {
     for (k, v) in t {
         let p = if path.is_empty() { k.clone() } else { format!("{path}.{k}") };
         leaf(v, &p, looks_secret(k), secrets, out);
     }
 }
 
-fn leaf(v: &Value, path: &str, named_secret: bool, secrets: &BTreeSet<String>, out: &mut Vec<(String, String)>) {
+fn leaf(v: &Value, path: &str, named_secret: bool, secrets: &BTreeSet<String>, out: &mut Vec<Entry>) {
+    let plain = |shown: String| Entry { path: path.to_owned(), shown, secret: None };
+    let redacted = |shown: String, real: String| Entry { path: path.to_owned(), shown, secret: Some(SecretString::from(real)) };
     match &v.kind {
         ValueKind::Table(t) => flatten(t, path, secrets, out),
         ValueKind::Array(a) => {
@@ -253,10 +286,13 @@ fn leaf(v: &Value, path: &str, named_secret: bool, secrets: &BTreeSet<String>, o
                 leaf(item, &format!("{path}[{i}]"), named_secret, secrets, out);
             }
         }
-        _ if named_secret || secrets.contains(path) => out.push((path.to_owned(), MASK.to_owned())),
-        ValueKind::String(s) => out.push((path.to_owned(), mask_url_password(s))),
-        ValueKind::Nil => out.push((path.to_owned(), "null".to_owned())),
-        _ => out.push((path.to_owned(), v.to_string())),
+        _ if named_secret || secrets.contains(path) => out.push(redacted(MASK.to_owned(), v.to_string())),
+        ValueKind::String(s) => match mask_url_password(s) {
+            masked if masked != *s => out.push(redacted(masked, s.clone())),
+            _ => out.push(plain(s.clone())),
+        },
+        ValueKind::Nil => out.push(plain("null".to_owned())),
+        _ => out.push(plain(v.to_string())),
     }
 }
 
@@ -266,7 +302,7 @@ fn looks_secret(key: &str) -> bool {
     ["key", "secret", "password", "token"].iter().any(|w| k.split('_').any(|part| part == *w))
 }
 
-/// `scheme://user:password@host/db` -> `scheme://user:********@host/db`.
+/// `scheme://user:password@host/db` -> `scheme://user:<redacted>@host/db`.
 fn mask_url_password(url: &str) -> String {
     let Some(scheme) = url.find("://") else { return url.to_owned() };
     let rest = &url[scheme + 3..];
@@ -341,8 +377,9 @@ hosts = ["a", "env(EXTRA_HOST)", "b"]
         assert!(l.value.debug);
         assert_eq!(l.value.key.expose_secret(), "s3cr3t");
         assert_eq!(l.value.hosts, ["a", "b"], "unset optional array items are dropped");
-        assert!(!l.show().contains("s3cr3t"), "{}", l.show());
-        assert!(l.show().lines().any(|line| line.starts_with("key ") && line.ends_with(MASK)), "{}", l.show());
+        assert!(!l.listing.show().contains("s3cr3t"), "{}", l.listing.show());
+        assert!(l.listing.show().lines().any(|line| line.starts_with("key ") && line.ends_with("<redacted>")), "{}", l.listing.show());
+        assert!(l.listing.show_secret_values().lines().any(|line| line.starts_with("key ") && line.ends_with("s3cr3t")));
     }
 
     #[test]
@@ -380,7 +417,7 @@ hosts = ["a", "env(EXTRA_HOST)", "b"]
         let l = load_from::<App>(&d, Some("production"), &vars).unwrap();
         assert!(l.value.debug);
         assert_eq!(l.value.nested.every, std::time::Duration::from_secs(7200));
-        assert!(!l.show().contains("t0k"));
+        assert!(!l.listing.show().contains("t0k"));
         assert!(load_from::<App>(&d, Some("staging"), &vars).is_ok(), "missing env file is fine");
         for bad in ["../etc", "default", "a/b"] {
             assert!(matches!(load_from::<App>(&d, Some(bad), &vars), Err(Error::Files(_))), "{bad}");
@@ -414,8 +451,18 @@ hosts = ["a", "env(EXTRA_HOST)", "b"]
     }
 
     #[test]
+    fn url_passwords_and_named_keys_are_redacted_until_asked() {
+        let d = dir(&[("default.toml", "name = \"postgres://u:pw@h/db\"\ndebug = false\nkey = \"literal-in-file\"\n")]);
+        let l = load_from::<App>(&d, None, &env(&[])).unwrap();
+        let (shown, revealed) = (l.listing.show(), l.listing.show_secret_values());
+        assert!(!shown.contains("pw@") && !shown.contains("literal-in-file"), "{shown}");
+        assert!(shown.contains("postgres://u:<redacted>@h/db"), "{shown}");
+        assert!(revealed.contains("postgres://u:pw@h/db") && revealed.contains("literal-in-file"), "{revealed}");
+    }
+
+    #[test]
     fn masks() {
-        assert_eq!(mask_url_password("postgres://u:pw@h/db"), "postgres://u:********@h/db");
+        assert_eq!(mask_url_password("postgres://u:pw@h/db"), "postgres://u:<redacted>@h/db");
         assert_eq!(mask_url_password("postgres://h/db?x=a@b"), "postgres://h/db?x=a@b");
         assert_eq!(mask_url_password("postgres://u@h/db"), "postgres://u@h/db");
         assert!(looks_secret("app_key") && looks_secret("client_secret") && looks_secret("API_TOKEN"));
