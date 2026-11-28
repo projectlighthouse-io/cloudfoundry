@@ -170,6 +170,66 @@ pub async fn not_a_member(db: &Db<Primary>, target: teams::Target<TeamRole, OrgR
     if member { Err(invalid("email", "They are already a member.")) } else { Ok(()) }
 }
 
+/// A member as responses show them: by the user's `uuid`, never their id.
+#[derive(Serialize)]
+pub struct MemberItem<R> {
+    pub uuid: teams::Uuid<crate::users::User>,
+    pub name: Option<String>,
+    pub email: String,
+    pub role: R,
+}
+
+/// Members with their users' uuids, names and emails. Members whose user is gone are left out.
+pub async fn member_items<R>(db: &Db<Primary>, members: Vec<teams::Member<R>>) -> Result<Vec<MemberItem<R>>, Response<Body>> {
+    let users = crate::users::Users { db: db.clone() };
+    let mut out = Vec::with_capacity(members.len());
+    // ponytail: one query per member; fine for team-sized lists, batch it if teams get large.
+    for m in members {
+        match auth::Provider::find(&users, m.user_id).await {
+            Ok(Some(u)) => out.push(MemberItem { uuid: u.uuid, name: u.name, email: u.email, role: m.role }),
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!("loading a member: {e}");
+                return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The internal id of the user `{user}` names. `404` if there is none.
+pub async fn user_id(db: &Db<Primary>, user: teams::Uuid<crate::users::User>) -> Result<i64, Response<Body>> {
+    match (crate::users::Users { db: db.clone() }).by_uuid(user).await {
+        Ok(Some(u)) => Ok(u.id),
+        Ok(None) => Err(StatusCode::NOT_FOUND.into_response()),
+        Err(e) => {
+            tracing::error!("finding a user by uuid: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+    }
+}
+
+/// The internal id of the organization a new team goes in, from its public
+/// id. `404` for an id that names no organization.
+pub async fn org_id(db: &Db<Primary>, org: Option<teams::Uuid<teams::Org>>) -> Result<Option<i64>, Response<Body>> {
+    let Some(org) = org else { return Ok(None) };
+    match teams(db).store().org_by_uuid(org).await.map_err(failed)? {
+        Some(found) => Ok(Some(found.id)),
+        None => Err(StatusCode::NOT_FOUND.into_response()),
+    }
+}
+
+/// Where an accepted invitation leads: `/teams/{uuid}` or
+/// `/organizations/{uuid}`. `404` if it is gone.
+pub async fn joined_path(db: &Db<Primary>, target: teams::Target<TeamRole, OrgRole>) -> Result<String, Response<Body>> {
+    let t = teams(db);
+    let path = match target {
+        teams::Target::Team { team, .. } => t.store().team(team).await.map_err(failed)?.map(|t| format!("/teams/{}", t.uuid)),
+        teams::Target::Org { org, .. } => t.store().org(org).await.map_err(failed)?.map(|o| format!("/organizations/{}", o.uuid)),
+    };
+    path.ok_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
 /// The accept link. Anyone logged in with the invited email can open it.
 pub fn invitation_link(app_url: &str, token: &str) -> String {
     format!("{app_url}/invitations/{token}")

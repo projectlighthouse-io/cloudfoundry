@@ -35,7 +35,7 @@ impl Users {
     /// The user linked to this provider account, if any.
     pub async fn by_social(&self, provider: &str, provider_id: &str) -> Result<Option<User>, sqlx::Error> {
         sqlx::query_as(
-            "select u.id, u.name, u.email, u.password_hash, u.remember_token from users u
+            "select u.id, u.uuid, u.name, u.email, u.password_hash, u.remember_token from users u
              join social_accounts s on s.user_id = u.id where s.provider = $1 and s.provider_id = $2",
         )
         .bind(provider)
@@ -72,7 +72,8 @@ impl Users {
         let user = match self.by_email(email).await? {
             Some(user) => user,
             None => {
-                sqlx::query("insert into users (name, email, password_hash) values ($1, $2, null)")
+                sqlx::query("insert into users (uuid, name, email, password_hash) values ($1, $2, $3, null)")
+                    .bind(db::Uuid::<crate::users::User>::new())
                     .bind(social.name.as_deref())
                     .bind(email)
                     .execute(self.db.pool())

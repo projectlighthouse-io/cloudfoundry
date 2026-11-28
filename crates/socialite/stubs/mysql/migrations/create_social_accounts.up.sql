@@ -6,5 +6,5 @@ create table social_accounts (
     provider_id varchar(191) not null,
     created_at timestamp not null default current_timestamp,
     unique key social_accounts_provider (provider, provider_id),
-    foreign key (user_id) references users (id) on delete cascade
+    foreign key (user_id) references users (id)
 );

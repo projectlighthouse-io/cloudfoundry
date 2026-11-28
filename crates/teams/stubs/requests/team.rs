@@ -1,6 +1,7 @@
 //! Published by `art publish teams`. App code: change it freely.
 
 use serde::Deserialize;
+use teams::{Org, Uuid};
 use validate::Validate;
 
 use crate::access::{OrgRole, TeamRole};
@@ -9,8 +10,8 @@ use crate::access::{OrgRole, TeamRole};
 pub struct NewTeam {
     #[validate(required, max = 80)]
     pub name: String,
-    /// Leave out for a team that stands alone.
-    pub organization_id: Option<i64>,
+    /// The organization's uuid. Leave out for a team that stands alone.
+    pub organization: Option<Uuid<Org>>,
 }
 
 #[derive(Deserialize, Validate)]

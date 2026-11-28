@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import type { Uuid } from '../../types/Uuid'
 import { Link, useForm } from '@inertiajs/vue3'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-defineProps<{ email: string; organizations: { id: number; name: string; role: string }[] }>()
+defineProps<{ email: string; organizations: { uuid: Uuid<'Org'>; name: string; role: string }[] }>()
 
 const form = useForm({ name: '' })
 const submit = () => form.post('/organizations', { onSuccess: () => form.reset() })
@@ -23,8 +24,8 @@ const submit = () => form.post('/organizations', { onSuccess: () => form.reset()
       <div class="strip"><h2 id="orgs-h">Your organizations</h2><span class="meta">{{ organizations.length }}</span></div>
       <p v-if="organizations.length === 0" class="empty-row">You are not in an organization yet. Create one to group your teams.</p>
       <ul class="ledger">
-        <li v-for="o in organizations" :key="o.id">
-          <Link class="who" :href="`/organizations/${o.id}`">
+        <li v-for="o in organizations" :key="o.uuid">
+          <Link class="who" :href="`/organizations/${o.uuid}`">
             <span class="face" aria-hidden="true">{{ o.name.charAt(0).toUpperCase() }}</span>
             <span class="who-text"><span class="name">{{ o.name }}</span></span>
           </Link>

@@ -8,7 +8,7 @@ use route::{
     Router,
     http::{Request, StatusCode, request::Parts},
 };
-use teams::{Can, Membership, OrgCan, OrgMembership, Teams};
+use teams::{Can, Membership, OrgCan, OrgMembership, Uuid, Target, Teams};
 
 /// The test's "logged-in user": an `x-user` header.
 fn user(parts: &Parts) -> Option<i64> {
@@ -20,7 +20,7 @@ async fn show(m: Membership<TeamRole>) -> String {
 }
 
 async fn invite(can: Can<InviteMember, TeamRole>) -> String {
-    format!("invite {}", can.team.id)
+    format!("invite {}", can.team.uuid)
 }
 
 async fn destroy(_: Can<DeleteTeam, TeamRole>) -> &'static str {
@@ -65,14 +65,15 @@ async fn inputs_check_membership_and_permissions() {
             (status, String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap())
         }
     };
-    let (c, s, a) = (core.id, side.id, acme.id);
+    let (c, s, a) = (core.uuid, side.uuid, acme.uuid);
 
     assert_eq!(call("GET", format!("/teams/{c}"), None).await.0, StatusCode::UNAUTHORIZED);
     assert_eq!(call("GET", format!("/teams/{c}"), Some(1)).await.1, "Core Owner false");
     assert_eq!(call("GET", format!("/teams/{c}"), Some(2)).await.1, "Core Owner true", "org admin manages it");
     assert_eq!(call("GET", format!("/teams/{c}"), Some(3)).await.1, "Core Admin false");
     assert_eq!(call("GET", format!("/teams/{s}"), Some(1)).await.0, StatusCode::NOT_FOUND, "not a member: 404");
-    assert_eq!(call("GET", "/teams/999".into(), Some(1)).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(call("GET", format!("/teams/{}", core.id), Some(1)).await.0, StatusCode::NOT_FOUND, "internal id: 404");
+    assert_eq!(call("GET", format!("/teams/{}", Uuid::<teams::Team>::new()), Some(1)).await.0, StatusCode::NOT_FOUND, "unknown uuid");
     assert_eq!(call("GET", "/teams/abc".into(), Some(1)).await.0, StatusCode::NOT_FOUND);
 
     // One path parameter among several.
@@ -82,6 +83,8 @@ async fn inputs_check_membership_and_permissions() {
 
     assert_eq!(call("GET", format!("/orgs/{a}"), Some(3)).await.1, "Acme Member");
     assert_eq!(call("GET", format!("/orgs/{a}"), Some(4)).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(call("GET", format!("/orgs/{}", acme.id), Some(1)).await.0, StatusCode::NOT_FOUND, "internal id: 404");
+    assert_eq!(call("GET", format!("/orgs/{}", Uuid::<teams::Org>::new()), Some(1)).await.0, StatusCode::NOT_FOUND, "unknown uuid");
     assert_eq!(call("GET", format!("/orgs/{a}/billing"), Some(2)).await.0, StatusCode::FORBIDDEN);
     assert_eq!(call("GET", format!("/orgs/{a}/billing"), Some(1)).await.1, "billing");
 }
@@ -93,4 +96,32 @@ async fn without_the_layer_inputs_fail_loudly() {
     let routes = r.build(()).unwrap();
     let res = routes.handle(Request::get("/teams/1").header("x-user", "1").body(route::empty()).unwrap()).await;
     assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+/// Every key in a JSON value, at any depth.
+fn keys(v: &serde_json::Value, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::Object(m) => {
+            for (k, v) in m {
+                out.push(k.clone());
+                keys(v, out);
+            }
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|v| keys(v, out)),
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn json_carries_uuids_only() {
+    let t = Teams::new(common::Store::new());
+    let acme = t.create_org(1, "Acme").await.unwrap();
+    let core = t.create_team(1, Some(acme.id), "Core").await.unwrap();
+    let new = t.invite(Target::Team { team: core.id, role: TeamRole::Member }, "bo@example.com", 1, std::time::Duration::from_secs(60)).await.unwrap();
+    let json = serde_json::json!({ "org": acme, "team": core, "invitation": new.invitation });
+    let mut found = Vec::new();
+    keys(&json, &mut found);
+    assert!(!found.iter().any(|k| k == "id" || k.ends_with("_id") || k == "invited_by"), "internal ids leaked: {json}");
+    assert_eq!(json["team"]["uuid"], core.uuid.to_string());
+    assert_eq!(json["invitation"]["uuid"], new.invitation.uuid.to_string());
 }

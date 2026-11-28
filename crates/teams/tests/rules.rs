@@ -121,7 +121,7 @@ async fn org_team_invitations_need_org_membership() {
     t.accept(&to_team.token, BOB, "bob@example.com").await.unwrap();
     assert_eq!(t.store().team_role(team.id, BOB).await.unwrap(), Some(TeamRole::Member));
 
-    let pending = t.invite(Target::Org { org: org.id, role: OrgRole::Admin }, "cy@example.com", ADA, day).await.unwrap().invitation.id;
+    let pending = t.invite(Target::Org { org: org.id, role: OrgRole::Admin }, "cy@example.com", ADA, day).await.unwrap().invitation.uuid;
     let other = t.create_org(BOB, "Other").await.unwrap();
     assert!(matches!(t.revoke_org_invitation(&other, pending).await, Err(Error::NotFound)), "only the org's own invitations");
     assert!(matches!(t.revoke_team_invitation(&team, pending).await, Err(Error::NotFound)));
@@ -140,7 +140,7 @@ async fn one_pending_invitation_per_email_and_resend_rotates_it() {
     assert!(matches!(t.invite(target, "BOB@example.com", ADA, day).await, Err(Error::AlreadyInvited)), "ignores case");
     t.invite(Target::Team { team: t.create_team(ADA, None, "Ops").await.unwrap().id, role: TeamRole::Member }, "bob@example.com", ADA, day).await.unwrap();
 
-    let again = t.resend_team_invitation(&team, first.invitation.id, day).await.unwrap();
+    let again = t.resend_team_invitation(&team, first.invitation.uuid, day).await.unwrap();
     assert_ne!(again.token, first.token);
     assert_eq!(again.invitation.email, "bob@example.com");
     assert!(matches!(t.accept(&first.token, BOB, "bob@example.com").await, Err(Error::NotFound)), "the old link stops working");
@@ -152,5 +152,5 @@ async fn one_pending_invitation_per_email_and_resend_rotates_it() {
     assert_eq!(t.store().team_invitations(team.id).await.unwrap().len(), 1, "an expired one is replaced");
 
     let other = t.create_team(BOB, None, "Other").await.unwrap();
-    assert!(matches!(t.resend_team_invitation(&other, again.invitation.id, day).await, Err(Error::NotFound)));
+    assert!(matches!(t.resend_team_invitation(&other, again.invitation.uuid, day).await, Err(Error::NotFound)));
 }

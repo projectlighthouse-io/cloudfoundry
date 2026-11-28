@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Uuid } from '../../types/Uuid'
 import { Link, useForm } from '@inertiajs/vue3'
 import TeamMembers from '../../components/TeamMembers.vue'
 import TeamSettings from '../../components/TeamSettings.vue'
@@ -6,19 +7,19 @@ import AppLayout from '../../layouts/AppLayout.vue'
 
 const props = defineProps<{
   email: string
-  organization: { id: number; name: string }
-  user_id: number
+  organization: { uuid: Uuid<'Org'>; name: string }
+  user_uuid: Uuid<'User'>
   role: string
   can: { rename: boolean; delete: boolean; manage_members: boolean }
-  members: { id: number; email: string; name: string | null; role: string }[]
-  teams: { id: number; name: string }[]
-  invitations: { id: number; email: string; role: string; expires_at: number }[]
-  invitation_link: { id: number; url: string } | null
+  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
+  teams: { uuid: Uuid<'Team'>; name: string }[]
+  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
+  invitation_link: { uuid: Uuid<'Invitation'>; url: string } | null
 }>()
 
-const base = `/organizations/${props.organization.id}`
+const base = `/organizations/${props.organization.uuid}`
 const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')
-const team = useForm({ name: '', organization_id: props.organization.id })
+const team = useForm({ name: '', organization: props.organization.uuid })
 </script>
 
 <template>
@@ -37,8 +38,8 @@ const team = useForm({ name: '', organization_id: props.organization.id })
     <section aria-labelledby="teams-h">
       <div class="strip"><h2 id="teams-h">Teams</h2><span class="meta">{{ teams.length }}</span></div>
       <ul class="ledger">
-        <li v-for="t in teams" :key="t.id">
-          <Link class="who" :href="`/teams/${t.id}`">
+        <li v-for="t in teams" :key="t.uuid">
+          <Link class="who" :href="`/teams/${t.uuid}`">
             <span class="face" aria-hidden="true">{{ t.name.charAt(0).toUpperCase() }}</span>
             <span class="who-text"><span class="name">{{ t.name }}</span></span>
           </Link>
@@ -54,7 +55,7 @@ const team = useForm({ name: '', organization_id: props.organization.id })
       </ul>
     </section>
 
-    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.manage_members" remove-note="They also leave every team in this organization." />
+    <TeamMembers :base="base" :user-id="user_uuid" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.manage_members" remove-note="They also leave every team in this organization." />
 
     <TeamSettings
       :base="base" kind="organization" :name="organization.name"

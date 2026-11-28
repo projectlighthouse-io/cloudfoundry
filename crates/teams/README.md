@@ -27,7 +27,12 @@ async fn invite(cx: Cx<App>, (can, input): (Can<InviteMembers, TeamRole>, Valid<
 }
 ```
 
-Routes name their team by id: `/teams/{team}/...` and `/organizations/{org}/...`.
+Routes name their team by its `uuid` (a `db::Uuid<Team>`, re-exported as `teams::Uuid`): `/teams/{team}/...` and
+`/organizations/{org}/...`. A numeric id in the path is a 404. `Team`, `Org` and `Invitation` keep their internal `id` for
+app queries but never serialize it: JSON carries `uuid`. `Member` is not `Serialize` (its `user_id` is internal);
+the published `access::member_items` maps members to `{ uuid, name, email, role }` by the user's `uuid`, and
+`/members/{user}` takes that uuid. The published Vue pages type uuids as `Uuid<'Team'>`, `Uuid<'Org'>`,
+`Uuid<'Invitation'>` and `Uuid<'User'>` (from `resources/js/types/Uuid.ts`): the brand is the Rust type's name.
 `teams::layer(teams, teams::auth_user(|u: &User| u.id))` goes after `auth::layer`.
 
 ## Rules

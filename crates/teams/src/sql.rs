@@ -4,7 +4,7 @@
 
 use std::borrow::Cow;
 
-use crate::{Error, Invitation, Member, Org, Role, Target, Team};
+use crate::{Error, Invitation, Member, Org, Uuid, Role, Target, Team};
 
 fn failed(e: sqlx::Error) -> Error {
     Error::Store(Box::new(e))
@@ -48,19 +48,25 @@ fn members<R: Role>(rows: Vec<(i64, String)>) -> Vec<Member<R>> {
     rows.into_iter().filter_map(|(user_id, key)| Some(Member { user_id, role: role(&key)? })).collect()
 }
 
-type InvitationRow = (i64, String, i64, String, String, i64, i64);
+type InvitationRow = (i64, Uuid<Invitation>, String, i64, String, String, i64, i64);
 
-fn invitation<R: Role, O: Role>((id, scope, scope_id, email, key, invited_by, expires_at): InvitationRow) -> Option<Invitation<R, O>> {
+fn invitation<R: Role, O: Role>((id, uuid, scope, scope_id, email, key, invited_by, expires_at): InvitationRow) -> Option<Invitation<R, O>> {
     let target = match scope.as_str() {
         "team" => Target::Team { team: scope_id, role: role(&key)? },
         "org" => Target::Org { org: scope_id, role: role(&key)? },
         _ => return None,
     };
-    Some(Invitation { id, email, target, invited_by, expires_at })
+    Some(Invitation { id, uuid, email, target, invited_by, expires_at })
 }
 
-fn team((id, org_id, name): (i64, Option<i64>, String)) -> Team {
-    Team { id, org_id, name }
+type TeamRow = (i64, Uuid<Team>, Option<i64>, String);
+
+fn team((id, uuid, org_id, name): TeamRow) -> Team {
+    Team { id, uuid, org_id, name }
+}
+
+fn org((id, uuid, name): (i64, Uuid<Org>, String)) -> Org {
+    Org { id, uuid, name }
 }
 
 macro_rules! sql_store {
@@ -88,8 +94,14 @@ macro_rules! sql_store {
             type OrgRole = O;
 
             async fn create_org(&self, owner: i64, name: &str) -> Result<Org, Error> {
+                let uuid = Uuid::new();
                 let mut tx = self.pool.begin().await.map_err(failed)?;
-                sqlx::query(&statement("insert into organizations (name) values (?)", $numbered)).bind(name).execute(&mut *tx).await.map_err(failed)?;
+                sqlx::query(&statement("insert into organizations (uuid, name) values (?, ?)", $numbered))
+                    .bind(uuid)
+                    .bind(name)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(failed)?;
                 let (id,): (i64,) = sqlx::query_as($last_id).fetch_one(&mut *tx).await.map_err(failed)?;
                 sqlx::query(&statement("insert into organization_members (organization_id, user_id, role) values (?, ?, ?)", $numbered))
                     .bind(id)
@@ -99,16 +111,25 @@ macro_rules! sql_store {
                     .await
                     .map_err(failed)?;
                 tx.commit().await.map_err(failed)?;
-                Ok(Org { id, name: name.to_owned() })
+                Ok(Org { id, uuid, name: name.to_owned() })
             }
 
             async fn org(&self, id: i64) -> Result<Option<Org>, Error> {
-                let row: Option<(i64, String)> = sqlx::query_as(&statement("select id, name from organizations where id = ?", $numbered))
+                let row = sqlx::query_as(&statement("select id, uuid, name from organizations where id = ?", $numbered))
                     .bind(id)
                     .fetch_optional(&self.pool)
                     .await
                     .map_err(failed)?;
-                Ok(row.map(|(id, name)| Org { id, name }))
+                Ok(row.map(org))
+            }
+
+            async fn org_by_uuid(&self, id: Uuid<Org>) -> Result<Option<Org>, Error> {
+                let row = sqlx::query_as(&statement("select id, uuid, name from organizations where uuid = ?", $numbered))
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(failed)?;
+                Ok(row.map(org))
             }
 
             async fn rename_org(&self, id: i64, name: &str) -> Result<(), Error> {
@@ -186,20 +207,22 @@ macro_rules! sql_store {
             }
 
             async fn orgs_of(&self, user: i64) -> Result<Vec<(Org, O)>, Error> {
-                let rows: Vec<(i64, String, String)> = sqlx::query_as(&statement(
-                    "select o.id, o.name, m.role from organizations o join organization_members m on m.organization_id = o.id where m.user_id = ? order by o.id",
+                let rows: Vec<(i64, Uuid<Org>, String, String)> = sqlx::query_as(&statement(
+                    "select o.id, o.uuid, o.name, m.role from organizations o join organization_members m on m.organization_id = o.id where m.user_id = ? order by o.id",
                     $numbered,
                 ))
                 .bind(user)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(failed)?;
-                Ok(rows.into_iter().filter_map(|(id, name, key)| Some((Org { id, name }, role(&key)?))).collect())
+                Ok(rows.into_iter().filter_map(|(id, uuid, name, key)| Some((Org { id, uuid, name }, role(&key)?))).collect())
             }
 
             async fn create_team(&self, owner: i64, org: Option<i64>, name: &str) -> Result<Team, Error> {
+                let uuid = Uuid::new();
                 let mut tx = self.pool.begin().await.map_err(failed)?;
-                sqlx::query(&statement("insert into teams (organization_id, name) values (?, ?)", $numbered))
+                sqlx::query(&statement("insert into teams (uuid, organization_id, name) values (?, ?, ?)", $numbered))
+                    .bind(uuid)
                     .bind(org)
                     .bind(name)
                     .execute(&mut *tx)
@@ -214,11 +237,20 @@ macro_rules! sql_store {
                     .await
                     .map_err(failed)?;
                 tx.commit().await.map_err(failed)?;
-                Ok(Team { id, org_id: org, name: name.to_owned() })
+                Ok(Team { id, uuid, org_id: org, name: name.to_owned() })
             }
 
             async fn team(&self, id: i64) -> Result<Option<Team>, Error> {
-                let row = sqlx::query_as(&statement("select id, organization_id, name from teams where id = ?", $numbered))
+                let row = sqlx::query_as(&statement("select id, uuid, organization_id, name from teams where id = ?", $numbered))
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(failed)?;
+                Ok(row.map(team))
+            }
+
+            async fn team_by_uuid(&self, id: Uuid<Team>) -> Result<Option<Team>, Error> {
+                let row = sqlx::query_as(&statement("select id, uuid, organization_id, name from teams where uuid = ?", $numbered))
                     .bind(id)
                     .fetch_optional(&self.pool)
                     .await
@@ -291,19 +323,19 @@ macro_rules! sql_store {
             }
 
             async fn teams_of(&self, user: i64) -> Result<Vec<(Team, R)>, Error> {
-                let rows: Vec<(i64, Option<i64>, String, String)> = sqlx::query_as(&statement(
-                    "select t.id, t.organization_id, t.name, m.role from teams t join team_members m on m.team_id = t.id where m.user_id = ? order by t.id",
+                let rows: Vec<(i64, Uuid<Team>, Option<i64>, String, String)> = sqlx::query_as(&statement(
+                    "select t.id, t.uuid, t.organization_id, t.name, m.role from teams t join team_members m on m.team_id = t.id where m.user_id = ? order by t.id",
                     $numbered,
                 ))
                 .bind(user)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(failed)?;
-                Ok(rows.into_iter().filter_map(|(id, org, name, key)| Some((team((id, org, name)), role(&key)?))).collect())
+                Ok(rows.into_iter().filter_map(|(id, uuid, org, name, key)| Some((team((id, uuid, org, name)), role(&key)?))).collect())
             }
 
             async fn org_teams(&self, org: i64) -> Result<Vec<Team>, Error> {
-                let rows: Vec<(i64, Option<i64>, String)> = sqlx::query_as(&statement("select id, organization_id, name from teams where organization_id = ? order by id", $numbered))
+                let rows: Vec<TeamRow> = sqlx::query_as(&statement("select id, uuid, organization_id, name from teams where organization_id = ? order by id", $numbered))
                     .bind(org)
                     .fetch_all(&self.pool)
                     .await
@@ -316,11 +348,13 @@ macro_rules! sql_store {
                     Target::Team { team, role } => ("team", team, role.key()),
                     Target::Org { org, role } => ("org", org, role.key()),
                 };
+                let uuid = Uuid::new();
                 let mut tx = self.pool.begin().await.map_err(failed)?;
                 sqlx::query(&statement(
-                    "insert into team_invitations (scope, scope_id, email, role, token_hash, invited_by, expires_at) values (?, ?, ?, ?, ?, ?, ?)",
+                    "insert into team_invitations (uuid, scope, scope_id, email, role, token_hash, invited_by, expires_at) values (?, ?, ?, ?, ?, ?, ?, ?)",
                     $numbered,
                 ))
+                .bind(uuid)
                 .bind(scope)
                 .bind(scope_id)
                 .bind(email)
@@ -333,12 +367,12 @@ macro_rules! sql_store {
                 .map_err(failed)?;
                 let (id,): (i64,) = sqlx::query_as($last_id).fetch_one(&mut *tx).await.map_err(failed)?;
                 tx.commit().await.map_err(failed)?;
-                Ok(Invitation { id, email: email.to_owned(), target, invited_by, expires_at })
+                Ok(Invitation { id, uuid, email: email.to_owned(), target, invited_by, expires_at })
             }
 
             async fn invitation(&self, token_hash: &str) -> Result<Option<Invitation<R, O>>, Error> {
                 let row: Option<InvitationRow> = sqlx::query_as(&statement(
-                    "select id, scope, scope_id, email, role, invited_by, expires_at from team_invitations where token_hash = ?",
+                    "select id, uuid, scope, scope_id, email, role, invited_by, expires_at from team_invitations where token_hash = ?",
                     $numbered,
                 ))
                 .bind(token_hash)
@@ -350,7 +384,7 @@ macro_rules! sql_store {
 
             async fn team_invitations(&self, team: i64) -> Result<Vec<Invitation<R, O>>, Error> {
                 let rows: Vec<InvitationRow> = sqlx::query_as(&statement(
-                    "select id, scope, scope_id, email, role, invited_by, expires_at from team_invitations where scope = 'team' and scope_id = ? order by id",
+                    "select id, uuid, scope, scope_id, email, role, invited_by, expires_at from team_invitations where scope = 'team' and scope_id = ? order by id",
                     $numbered,
                 ))
                 .bind(team)
@@ -362,7 +396,7 @@ macro_rules! sql_store {
 
             async fn org_invitations(&self, org: i64) -> Result<Vec<Invitation<R, O>>, Error> {
                 let rows: Vec<InvitationRow> = sqlx::query_as(&statement(
-                    "select id, scope, scope_id, email, role, invited_by, expires_at from team_invitations where scope = 'org' and scope_id = ? order by id",
+                    "select id, uuid, scope, scope_id, email, role, invited_by, expires_at from team_invitations where scope = 'org' and scope_id = ? order by id",
                     $numbered,
                 ))
                 .bind(org)

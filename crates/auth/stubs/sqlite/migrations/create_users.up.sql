@@ -1,5 +1,7 @@
 create table users (
     id integer primary key autoincrement,
+    -- Names the user in URLs and JSON (`db::Uuid<User>`); `id` stays internal.
+    uuid blob not null unique,
     name text,
     email text not null unique,
     password_hash text not null,
@@ -10,7 +12,9 @@ create table users (
 -- API tokens (`.tokens()` on the auth layer). Only SHA-256 hashes are stored.
 create table api_tokens (
     id integer primary key autoincrement,
-    user_id integer not null references users (id) on delete cascade,
+    -- The UUIDv7 that names the token in URLs and JSON (`db::Uuid<ApiToken>`).
+    uuid blob not null unique,
+    user_id integer not null references users (id),
     name text not null,
     token_hash text not null unique,
     expires_at integer,
@@ -19,7 +23,7 @@ create table api_tokens (
 
 -- Password reset tokens: one per user, SHA-256 hash, unix-seconds creation time.
 create table password_resets (
-    user_id integer primary key references users (id) on delete cascade,
+    user_id integer primary key references users (id),
     token_hash text not null,
     created_at integer not null
 );

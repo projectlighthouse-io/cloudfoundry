@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Uuid } from '../../types/Uuid'
 import { Link, router } from '@inertiajs/vue3'
 import TeamMembers from '../../components/TeamMembers.vue'
 import TeamSettings from '../../components/TeamSettings.vue'
@@ -6,31 +7,31 @@ import AppLayout from '../../layouts/AppLayout.vue'
 
 const props = defineProps<{
   email: string
-  team: { id: number; name: string; org_id: number | null }
-  organization: { id: number; name: string } | null
-  user_id: number
+  team: { uuid: Uuid<'Team'>; name: string }
+  organization: { uuid: Uuid<'Org'>; name: string } | null
+  user_uuid: Uuid<'User'>
   role: string
   via_org: boolean
   current: boolean
   can: { rename: boolean; delete: boolean; manage_members: boolean; invite: boolean }
-  members: { id: number; email: string; name: string | null; role: string }[]
-  invitations: { id: number; email: string; role: string; expires_at: number }[]
-  invitation_link: { id: number; url: string } | null
+  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
+  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
+  invitation_link: { uuid: Uuid<'Invitation'>; url: string } | null
 }>()
 
-const base = `/teams/${props.team.id}`
+const base = `/teams/${props.team.uuid}`
 const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')
 </script>
 
 <template>
   <AppLayout :title="team.name" :user="email">
-    <p class="label-row"><Link href="/teams">Teams</Link><template v-if="organization"> / <Link :href="`/organizations/${organization.id}`">{{ organization.name }}</Link></template></p>
+    <p class="label-row"><Link href="/teams">Teams</Link><template v-if="organization"> / <Link :href="`/organizations/${organization.uuid}`">{{ organization.name }}</Link></template></p>
     <header class="phead">
       <div class="phead-id">
         <span class="tile" aria-hidden="true">{{ team.name.charAt(0).toUpperCase() }}</span>
         <div>
           <h1>{{ team.name }}</h1>
-          <p class="sub">You are {{ article(role) }} {{ role }}<template v-if="via_org"> through <Link :href="`/organizations/${organization?.id}`">{{ organization?.name }}</Link></template>.</p>
+          <p class="sub">You are {{ article(role) }} {{ role }}<template v-if="via_org"> through <Link :href="`/organizations/${organization?.uuid}`">{{ organization?.name }}</Link></template>.</p>
         </div>
       </div>
       <div class="phead-act">
@@ -39,7 +40,7 @@ const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')
       </div>
     </header>
 
-    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.invite" remove-note="They lose access to this team." />
+    <TeamMembers :base="base" :user-id="user_uuid" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.invite" remove-note="They lose access to this team." />
 
     <TeamSettings
       :base="base" kind="team" :name="team.name"

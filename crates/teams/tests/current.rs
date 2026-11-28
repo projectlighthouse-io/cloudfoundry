@@ -62,9 +62,9 @@ async fn current_team_falls_back_and_follows_switches() {
 
     let mut ada = Client { routes: routes.clone(), user: 1, cookie: None };
     assert_eq!(ada.send(Method::GET, "/current").await, "First", "the first team by id");
-    ada.send(Method::POST, &format!("/teams/{}/switch", second.id)).await;
+    ada.send(Method::POST, &format!("/teams/{}/switch", second.uuid)).await;
     assert_eq!(ada.send(Method::GET, "/current").await, "Second");
-    ada.send(Method::POST, &format!("/teams/{}/switch", other.id)).await;
+    ada.send(Method::POST, &format!("/teams/{}/switch", other.uuid)).await;
     assert_eq!(ada.send(Method::GET, "/current").await, "Second", "cannot switch to a team you cannot open");
     assert_eq!(t.store().current_team_id(1).await.unwrap(), Some(second.id), "stored for the user");
     let mut ada_elsewhere = Client { routes: routes.clone(), user: 1, cookie: None };

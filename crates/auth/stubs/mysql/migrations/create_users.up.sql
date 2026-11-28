@@ -1,5 +1,7 @@
 create table users (
     id bigint auto_increment primary key,
+    -- Names the user in URLs and JSON (`db::Uuid<User>`); `id` stays internal.
+    uuid binary(16) not null unique,
     name varchar(255),
     email varchar(191) not null unique,
     password_hash varchar(255) not null,
@@ -10,12 +12,14 @@ create table users (
 -- API tokens (`.tokens()` on the auth layer). Only SHA-256 hashes are stored.
 create table api_tokens (
     id bigint auto_increment primary key,
+    -- The UUIDv7 that names the token in URLs and JSON (`db::Uuid<ApiToken>`).
+    uuid binary(16) not null unique,
     user_id bigint not null,
     name varchar(255) not null,
     token_hash char(64) not null unique,
     expires_at bigint,
     created_at timestamp not null default current_timestamp,
-    foreign key (user_id) references users (id) on delete cascade
+    foreign key (user_id) references users (id)
 );
 
 -- Password reset tokens: one per user, SHA-256 hash, unix-seconds creation time.
@@ -23,5 +27,5 @@ create table password_resets (
     user_id bigint primary key,
     token_hash char(64) not null,
     created_at bigint not null,
-    foreign key (user_id) references users (id) on delete cascade
+    foreign key (user_id) references users (id)
 );

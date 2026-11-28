@@ -8,11 +8,11 @@ use route::{
     http::{Response, StatusCode},
 };
 use serde::{Deserialize, Serialize};
-use teams::{Can, CurrentTeam, Invitation, Member, Membership, Store, Target, Team};
+use teams::{Can, CurrentTeam, Invitation, Membership, Uuid, Store, Target, Team};
 use validate::Valid;
 
 use crate::{
-    access::{self, DeleteTeam, InviteMembers, ManageMembers, OrgRole, RenameTeam, TeamRole},
+    access::{self, DeleteTeam, MemberItem, InviteMembers, ManageMembers, OrgRole, RenameTeam, TeamRole},
     requests::team::{Invite, NewTeam, RoleChange, TeamName},
     state::App,
     users::User,
@@ -36,7 +36,7 @@ pub struct TeamSummary {
 pub struct TeamDetail {
     #[serde(flatten)]
     summary: TeamSummary,
-    members: Vec<Member<TeamRole>>,
+    members: Vec<MemberItem<TeamRole>>,
     invitations: Vec<Invitation<TeamRole, OrgRole>>,
 }
 
@@ -46,12 +46,12 @@ fn summary(m: Membership<TeamRole>) -> TeamSummary {
 
 #[derive(Deserialize)]
 pub struct MemberPath {
-    user: i64,
+    user: Uuid<User>,
 }
 
 #[derive(Deserialize)]
 pub struct InvitationPath {
-    invitation: i64,
+    invitation: Uuid<Invitation>,
 }
 
 /// Every team the user can open.
@@ -62,14 +62,15 @@ pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<Json<Vec<TeamSumma
 
 /// A new team, owned by the user. In an organization, the user must be a member of it.
 pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewTeam>>) -> Result<(StatusCode, Json<Team>)> {
-    let team = access::teams(&cx.db).create_team(user.id, input.organization_id, input.name.trim()).await.map_err(access::failed)?;
+    let org = access::org_id(&cx.db, input.organization).await?;
+    let team = access::teams(&cx.db).create_team(user.id, org, input.name.trim()).await.map_err(access::failed)?;
     Ok((StatusCode::CREATED, Json(team)))
 }
 
 pub async fn show(cx: Cx<App>, m: Membership<TeamRole>) -> Result<Json<TeamDetail>> {
     let teams = access::teams(&cx.db);
     let store = teams.store();
-    let members = store.team_members(m.team.id).await.map_err(access::failed)?;
+    let members = access::member_items(&cx.db, store.team_members(m.team.id).await.map_err(access::failed)?).await?;
     let invitations = store.team_invitations(m.team.id).await.map_err(access::failed)?;
     Ok(Json(TeamDetail { summary: summary(m), members, invitations }))
 }
@@ -111,14 +112,16 @@ async fn guard_owner(cx: &App, can: &Membership<TeamRole>, user: i64, role: Opti
 }
 
 pub async fn update_member(cx: Cx<App>, can: Can<ManageMembers, TeamRole>, Path(path): Path<MemberPath>, input: Valid<Json<RoleChange>>) -> Result<StatusCode> {
-    guard_owner(&cx, &can, path.user, Some(input.role)).await?;
-    access::teams(&cx.db).change_role(&can.team, path.user, input.role).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, Some(input.role)).await?;
+    access::teams(&cx.db).change_role(&can.team, user, input.role).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 pub async fn remove_member(cx: Cx<App>, can: Can<ManageMembers, TeamRole>, Path(path): Path<MemberPath>) -> Result<StatusCode> {
-    guard_owner(&cx, &can, path.user, None).await?;
-    access::teams(&cx.db).remove_member(&can.team, path.user).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, None).await?;
+    access::teams(&cx.db).remove_member(&can.team, user).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

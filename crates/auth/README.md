@@ -58,3 +58,8 @@ lifetime (at most 400 days), and returns `Err(ConfigError)` for invalid values. 
 login_route = "login"
 remember_for = "30d"
 ```
+
+The published `users` table has a `uuid` column (`db::Uuid<User>`, UUIDv7, app-generated) and so does
+`api_tokens`. The published `User` serializes as `{ "uuid", "name", "email" }`: `id`, the password hash and the
+remember token are `#[serde(skip)]`. Name users and tokens by `uuid` in URLs (`Users::by_uuid`,
+`Users::delete_token_by_uuid`); the internal `id` is for queries. Apps need `db`'s `uuid` feature (on in `art new`).

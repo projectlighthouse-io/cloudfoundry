@@ -16,7 +16,7 @@ use route::{
 use serde::Deserialize;
 use tower::{Layer, Service};
 
-use crate::{Error, Grants, Org, OrgRole, Permission, Role, Store, Team, Teams};
+use crate::{Error, Grants, Org, OrgRole, Permission, Uuid, Role, Store, Team, Teams};
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -66,7 +66,8 @@ where
 /// Lookups the inputs need, without naming the store type.
 trait Lookup<R, O>: Send + Sync {
     fn team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
-    fn org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
+    fn team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
     fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
@@ -79,8 +80,11 @@ impl<S: Store> Lookup<S::Role, S::OrgRole> for Teams<S> {
     fn team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
         Box::pin(self.team_access(team, user))
     }
-    fn org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<S::OrgRole>>, Error>> {
-        Box::pin(self.org_access(org, user))
+    fn team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
+        Box::pin(self.team_access_by_uuid(team, user))
+    }
+    fn org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<S::OrgRole>>, Error>> {
+        Box::pin(self.org_access_by_uuid(org, user))
     }
     fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
         Box::pin(Teams::fallback_team(self, user))
@@ -123,7 +127,9 @@ impl<O> Clone for OrgGate<O> {
 
 pub(crate) trait TeamOnly<R>: Send + Sync {
     fn user<'a>(&'a self, parts: &'a mut Parts) -> BoxFuture<'a, Result<i64, Response<Body>>>;
+    #[cfg_attr(not(feature = "session"), allow(dead_code))]
     fn lookup_team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn lookup_team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
     fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
@@ -134,7 +140,7 @@ pub(crate) trait TeamOnly<R>: Send + Sync {
 
 pub(crate) trait OrgOnly<O>: Send + Sync {
     fn user<'a>(&'a self, parts: &'a mut Parts) -> BoxFuture<'a, Result<i64, Response<Body>>>;
-    fn lookup_org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
+    fn lookup_org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
 }
 
 impl<R: Role, O: OrgRole> TeamOnly<R> for Gate<R, O> {
@@ -143,6 +149,9 @@ impl<R: Role, O: OrgRole> TeamOnly<R> for Gate<R, O> {
     }
     fn lookup_team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
         self.lookup.team(team, user)
+    }
+    fn lookup_team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
+        self.lookup.team_public(team, user)
     }
     fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
         self.lookup.fallback_team(user)
@@ -159,8 +168,8 @@ impl<R: Role, O: OrgRole> OrgOnly<O> for Gate<R, O> {
     fn user<'a>(&'a self, parts: &'a mut Parts) -> BoxFuture<'a, Result<i64, Response<Body>>> {
         self.identify.user_id(parts)
     }
-    fn lookup_org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>> {
-        self.lookup.org(org, user)
+    fn lookup_org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>> {
+        self.lookup.org_public(org, user)
     }
 }
 
@@ -239,17 +248,18 @@ where
 
 #[derive(Deserialize)]
 struct TeamParam {
-    team: i64,
+    team: Uuid<Team>,
 }
 
 #[derive(Deserialize)]
 struct OrgParam {
-    org: i64,
+    org: Uuid<Org>,
 }
 
-/// The current user's access to the `{team}` in the path. `404` if the
-/// team does not exist or the user cannot open it, so its existence does
-/// not leak.
+/// The current user's access to the `{team}` in the path, a
+/// [`Uuid<Team>`](Uuid). `404` if the id does not parse (an internal
+/// id), the team does not exist or the user cannot open it, so its
+/// existence does not leak.
 #[derive(Clone, Debug)]
 pub struct Membership<R> {
     pub team: Team,
@@ -275,7 +285,7 @@ impl<S: Send + Sync, R: Role> FromRequestParts<S> for Membership<R> {
         let gate = team_gate::<R>(parts)?;
         let user = gate.0.user(parts).await?;
         let Path(TeamParam { team }) = Path::<TeamParam>::from_request_parts(parts, state).await?;
-        gate.0.lookup_team(team, user).await.map_err(store_failed)?.ok_or_else(not_found)
+        gate.0.lookup_team_public(team, user).await.map_err(store_failed)?.ok_or_else(not_found)
     }
 }
 
@@ -314,7 +324,8 @@ impl<S: Send + Sync, P: Permission, R: Grants<P>> FromRequest<S> for Can<P, R> {
     }
 }
 
-/// The current user's role in the `{org}` in the path. `404` if the
+/// The current user's role in the `{org}` in the path, a
+/// [`Uuid<Org>`](Uuid). `404` if the id does not parse, the
 /// organization does not exist or the user is not a member.
 #[derive(Clone, Debug)]
 pub struct OrgMembership<O> {
@@ -337,7 +348,7 @@ impl<S: Send + Sync, O: OrgRole> FromRequestParts<S> for OrgMembership<O> {
         let gate = parts.extensions.get::<OrgGate<O>>().cloned().ok_or_else(no_layer)?;
         let user = gate.0.user(parts).await?;
         let Path(OrgParam { org }) = Path::<OrgParam>::from_request_parts(parts, state).await?;
-        gate.0.lookup_org(org, user).await.map_err(store_failed)?.ok_or_else(not_found)
+        gate.0.lookup_org_public(org, user).await.map_err(store_failed)?.ok_or_else(not_found)
     }
 }
 

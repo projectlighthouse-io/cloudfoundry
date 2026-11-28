@@ -16,7 +16,8 @@
 //! }
 //! ```
 //!
-//! Routes name their team by id (`/teams/{team}/...`, `/orgs/{org}/...`).
+//! Routes name their team by uuid (`/teams/{team}/...`, `/orgs/{org}/...`,
+//! a [`Uuid`]): internal `i64` ids never appear in a URL or in JSON.
 //! [`layer`] goes after `auth::layer`; it gives the inputs ([`Membership`],
 //! [`Can`], [`OrgMembership`], [`OrgCan`]) the store and the current user.
 //!
@@ -46,6 +47,7 @@ pub use current::CurrentTeam;
 #[cfg(feature = "auth")]
 pub use inputs::{AuthUser, auth_user};
 pub use inputs::{Can, Identify, Membership, OrgCan, OrgMembership, TeamsLayer, TeamsService, layer};
+pub use db::Uuid;
 pub use memory::MemoryStore;
 #[cfg(feature = "mysql")]
 pub use sql::MysqlStore;
@@ -82,34 +84,33 @@ pub trait Grants<P: Permission>: Role {
     fn grants(&self) -> bool;
 }
 
+/// Serializes as `{ "uuid", "name" }`; `id` is for app queries only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Org {
+    #[serde(skip)]
     pub id: i64,
+    pub uuid: Uuid<Org>,
     pub name: String,
 }
 
+/// Serializes as `{ "uuid", "name" }`; the internal ids are for app queries only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Team {
+    #[serde(skip)]
     pub id: i64,
+    pub uuid: Uuid<Team>,
     /// `None` for a team that stands alone.
+    #[serde(skip)]
     pub org_id: Option<i64>,
     pub name: String,
 }
 
-/// A member and their role. Serializes the role as its key.
+/// A member and their role. Not `Serialize`: `user_id` is internal. Map
+/// members to your users (by `uuid`) for a response.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Member<R> {
     pub user_id: i64,
     pub role: R,
-}
-
-impl<R: Role> Serialize for Member<R> {
-    fn serialize<Se: Serializer>(&self, s: Se) -> Result<Se::Ok, Se::Error> {
-        let mut st = s.serialize_struct("Member", 2)?;
-        st.serialize_field("user_id", &self.user_id)?;
-        st.serialize_field("role", self.role.key())?;
-        st.end()
-    }
 }
 
 /// What an invitation joins, and with which role.
@@ -119,9 +120,11 @@ pub enum Target<R, O> {
     Org { org: i64, role: O },
 }
 
+/// The role parameters default to `()` so the id type reads `Uuid<Invitation>`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Invitation<R, O> {
+pub struct Invitation<R = (), O = ()> {
     pub id: i64,
+    pub uuid: Uuid<Invitation>,
     pub email: String,
     pub target: Target<R, O>,
     pub invited_by: i64,
@@ -131,14 +134,14 @@ pub struct Invitation<R, O> {
 
 impl<R: Role, O: Role> Serialize for Invitation<R, O> {
     fn serialize<Se: Serializer>(&self, s: Se) -> Result<Se::Ok, Se::Error> {
-        let mut st = s.serialize_struct("Invitation", 5)?;
-        st.serialize_field("id", &self.id)?;
+        // `invited_by` is a user's internal id: left out.
+        let mut st = s.serialize_struct("Invitation", 4)?;
+        st.serialize_field("uuid", &self.uuid)?;
         st.serialize_field("email", &self.email)?;
         match self.target {
             Target::Team { role, .. } => st.serialize_field("role", role.key())?,
             Target::Org { role, .. } => st.serialize_field("role", role.key())?,
         }
-        st.serialize_field("invited_by", &self.invited_by)?;
         st.serialize_field("expires_at", &self.expires_at)?;
         st.end()
     }
@@ -198,6 +201,7 @@ pub trait Store: Send + Sync + 'static {
     /// Create an organization with `owner` as `OrgRole::OWNER`.
     fn create_org(&self, owner: i64, name: &str) -> impl Future<Output = Result<Org, Error>> + Send;
     fn org(&self, id: i64) -> impl Future<Output = Result<Option<Org>, Error>> + Send;
+    fn org_by_uuid(&self, id: Uuid<Org>) -> impl Future<Output = Result<Option<Org>, Error>> + Send;
     fn rename_org(&self, id: i64, name: &str) -> impl Future<Output = Result<(), Error>> + Send;
     /// Deletes its teams, memberships and invitations too.
     fn delete_org(&self, id: i64) -> impl Future<Output = Result<(), Error>> + Send;
@@ -213,6 +217,7 @@ pub trait Store: Send + Sync + 'static {
     /// the organization already has a team with this name.
     fn create_team(&self, owner: i64, org: Option<i64>, name: &str) -> impl Future<Output = Result<Team, Error>> + Send;
     fn team(&self, id: i64) -> impl Future<Output = Result<Option<Team>, Error>> + Send;
+    fn team_by_uuid(&self, id: Uuid<Team>) -> impl Future<Output = Result<Option<Team>, Error>> + Send;
     fn rename_team(&self, id: i64, name: &str) -> impl Future<Output = Result<(), Error>> + Send;
     /// Deletes its memberships and invitations too.
     fn delete_team(&self, id: i64) -> impl Future<Output = Result<(), Error>> + Send;
@@ -406,7 +411,17 @@ impl<S: Store> Teams<S> {
     /// and the team role is lower. `None` without access.
     pub async fn team_access(&self, team: i64, user: i64) -> Result<Option<Membership<R<S>>>, Error> {
         let Some(found) = self.0.team(team).await? else { return Ok(None) };
-        let role = self.0.team_role(team, user).await?;
+        self.access_to(found, user).await
+    }
+
+    /// [`Teams::team_access`] for the team with this uuid.
+    pub async fn team_access_by_uuid(&self, team: Uuid<Team>, user: i64) -> Result<Option<Membership<R<S>>>, Error> {
+        let Some(found) = self.0.team_by_uuid(team).await? else { return Ok(None) };
+        self.access_to(found, user).await
+    }
+
+    async fn access_to(&self, found: Team, user: i64) -> Result<Option<Membership<R<S>>>, Error> {
+        let role = self.0.team_role(found.id, user).await?;
         if role != Some(R::<S>::OWNER) {
             if let Some(org) = found.org_id {
                 if self.0.org_role(org, user).await?.is_some_and(|r| r.manages_teams()) {
@@ -421,6 +436,12 @@ impl<S: Store> Teams<S> {
     pub async fn org_access(&self, org: i64, user: i64) -> Result<Option<OrgMembership<O<S>>>, Error> {
         let Some(found) = self.0.org(org).await? else { return Ok(None) };
         Ok(self.0.org_role(org, user).await?.map(|role| OrgMembership { org: found, role, user_id: user }))
+    }
+
+    /// [`Teams::org_access`] for the organization with this uuid.
+    pub async fn org_access_by_uuid(&self, org: Uuid<Org>, user: i64) -> Result<Option<OrgMembership<O<S>>>, Error> {
+        let Some(found) = self.0.org_by_uuid(org).await? else { return Ok(None) };
+        Ok(self.0.org_role(found.id, user).await?.map(|role| OrgMembership { org: found, role, user_id: user }))
     }
 
     /// Every team `user` can open: their own, and all teams of organizations
@@ -474,14 +495,14 @@ impl<S: Store> Teams<S> {
     /// Send one of `team`'s invitations again: a new token and a new
     /// `valid_for`; the old link stops working. [`Error::NotFound`] if it is
     /// not one of them.
-    pub async fn resend_team_invitation(&self, team: &Team, invitation: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
-        let old = self.0.team_invitations(team.id).await?.into_iter().find(|i| i.id == invitation).ok_or(Error::NotFound)?;
+    pub async fn resend_team_invitation(&self, team: &Team, invitation: Uuid<Invitation>, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
+        let old = self.0.team_invitations(team.id).await?.into_iter().find(|i| i.uuid == invitation).ok_or(Error::NotFound)?;
         self.reissue(old, valid_for).await
     }
 
     /// Send one of `org`'s invitations again; see [`Teams::resend_team_invitation`].
-    pub async fn resend_org_invitation(&self, org: &Org, invitation: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
-        let old = self.0.org_invitations(org.id).await?.into_iter().find(|i| i.id == invitation).ok_or(Error::NotFound)?;
+    pub async fn resend_org_invitation(&self, org: &Org, invitation: Uuid<Invitation>, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
+        let old = self.0.org_invitations(org.id).await?.into_iter().find(|i| i.uuid == invitation).ok_or(Error::NotFound)?;
         self.reissue(old, valid_for).await
     }
 
@@ -528,19 +549,15 @@ impl<S: Store> Teams<S> {
     }
 
     /// Withdraw one of `team`'s invitations. [`Error::NotFound`] if it is not one of them.
-    pub async fn revoke_team_invitation(&self, team: &Team, invitation: i64) -> Result<(), Error> {
-        if !self.0.team_invitations(team.id).await?.iter().any(|i| i.id == invitation) {
-            return Err(Error::NotFound);
-        }
-        self.0.delete_invitation(invitation).await
+    pub async fn revoke_team_invitation(&self, team: &Team, invitation: Uuid<Invitation>) -> Result<(), Error> {
+        let found = self.0.team_invitations(team.id).await?.into_iter().find(|i| i.uuid == invitation).ok_or(Error::NotFound)?;
+        self.0.delete_invitation(found.id).await
     }
 
     /// Withdraw one of `org`'s invitations. [`Error::NotFound`] if it is not one of them.
-    pub async fn revoke_org_invitation(&self, org: &Org, invitation: i64) -> Result<(), Error> {
-        if !self.0.org_invitations(org.id).await?.iter().any(|i| i.id == invitation) {
-            return Err(Error::NotFound);
-        }
-        self.0.delete_invitation(invitation).await
+    pub async fn revoke_org_invitation(&self, org: &Org, invitation: Uuid<Invitation>) -> Result<(), Error> {
+        let found = self.0.org_invitations(org.id).await?.into_iter().find(|i| i.uuid == invitation).ok_or(Error::NotFound)?;
+        self.0.delete_invitation(found.id).await
     }
 
     async fn team_owners(&self, team: i64) -> Result<usize, Error> {

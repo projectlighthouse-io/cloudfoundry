@@ -1,14 +1,15 @@
 <script setup lang="ts">
+import type { Uuid } from '../types/Uuid'
 import { router, useForm, usePage } from '@inertiajs/vue3'
 import { computed, ref } from 'vue'
 
 const props = defineProps<{
   base: string
-  userId: number
-  members: { id: number; email: string; name: string | null; role: string }[]
-  invitations: { id: number; email: string; role: string; expires_at: number }[]
+  userId: Uuid<'User'>
+  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
+  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
   /** The link of the invitation just sent; tokens are not stored, so only a fresh one can be shown. */
-  sentLink: { id: number; url: string } | null
+  sentLink: { uuid: Uuid<'Invitation'>; url: string } | null
   canManage: boolean
   canInvite: boolean
   removeNote: string
@@ -21,10 +22,10 @@ const roleError = computed(() => (page.props.errors as Record<string, string> | 
 const invite = useForm({ email: '', role: 'member' })
 
 const initial = (s: string) => s.charAt(0).toUpperCase()
-const changeRole = (user: number, role: string) => router.put(`${props.base}/members/${user}`, { role }, opts)
-const remove = (m: { id: number; email: string }) => confirm(`Remove ${m.email}? ${props.removeNote}`) && router.delete(`${props.base}/members/${m.id}`, opts)
-const revoke = (id: number) => router.delete(`${props.base}/invitations/${id}`, opts)
-const resend = (id: number) => router.post(`${props.base}/invitations/${id}/resend`, {}, opts)
+const changeRole = (user: Uuid<'User'>, role: string) => router.put(`${props.base}/members/${user}`, { role }, opts)
+const remove = (m: { uuid: Uuid<'User'>; email: string }) => confirm(`Remove ${m.email}? ${props.removeNote}`) && router.delete(`${props.base}/members/${m.uuid}`, opts)
+const revoke = (id: Uuid<'Invitation'>) => router.delete(`${props.base}/invitations/${id}`, opts)
+const resend = (id: Uuid<'Invitation'>) => router.post(`${props.base}/invitations/${id}/resend`, {}, opts)
 const copied = ref(false)
 const copy = async (url: string) => {
   await navigator.clipboard.writeText(url)
@@ -48,17 +49,17 @@ const count = computed(() => {
     <div class="strip"><h2 id="members-h">Members</h2><span class="meta">{{ count }}</span></div>
     <p v-if="roleError" class="flash" role="alert">{{ roleError }}</p>
     <ul class="ledger">
-      <li v-for="m in members" :key="m.id">
+      <li v-for="m in members" :key="m.uuid">
         <span class="who">
-          <span class="face" :class="{ 'face-me': m.id === userId }" aria-hidden="true">{{ initial(m.name ?? m.email) }}</span>
+          <span class="face" :class="{ 'face-me': m.uuid === userId }" aria-hidden="true">{{ initial(m.name ?? m.email) }}</span>
           <span class="who-text">
-            <span class="name">{{ m.name ?? m.email }}<span v-if="m.id === userId" class="you">you</span></span>
+            <span class="name">{{ m.name ?? m.email }}<span v-if="m.uuid === userId" class="you">you</span></span>
             <span class="meta">{{ m.email }}</span>
           </span>
         </span>
         <span class="trail">
-          <template v-if="canManage && m.id !== userId">
-            <select class="select select-sm" :value="m.role" :aria-label="`Role of ${m.email}`" @change="changeRole(m.id, ($event.target as HTMLSelectElement).value)">
+          <template v-if="canManage && m.uuid !== userId">
+            <select class="select select-sm" :value="m.role" :aria-label="`Role of ${m.email}`" @change="changeRole(m.uuid, ($event.target as HTMLSelectElement).value)">
               <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
             </select>
             <button class="btn-icon" type="button" :aria-label="`Remove ${m.email}`" title="Remove" @click="remove(m)">
@@ -68,7 +69,7 @@ const count = computed(() => {
           <span v-else class="role">{{ m.role }}</span>
         </span>
       </li>
-      <li v-for="i in invitations" :key="`i${i.id}`">
+      <li v-for="i in invitations" :key="`i${i.uuid}`">
         <span class="who">
           <span class="face face-pending" aria-hidden="true">{{ initial(i.email) }}</span>
           <span class="who-text">
@@ -79,11 +80,11 @@ const count = computed(() => {
         <span class="trail">
           <span class="state state-wait">pending</span>
           <template v-if="canInvite">
-            <button class="btn btn-line btn-sm" type="button" @click="resend(i.id)">Send again</button>
-            <button class="btn btn-line btn-sm" type="button" @click="revoke(i.id)">Withdraw</button>
+            <button class="btn btn-line btn-sm" type="button" @click="resend(i.uuid)">Send again</button>
+            <button class="btn btn-line btn-sm" type="button" @click="revoke(i.uuid)">Withdraw</button>
           </template>
         </span>
-        <div v-if="sentLink?.id === i.id" class="copy-link">
+        <div v-if="sentLink?.uuid === i.uuid" class="copy-link">
           <input class="input mono" :value="sentLink.url" readonly aria-label="Invitation link" @focus="($event.target as HTMLInputElement).select()" />
           <button class="btn btn-ink btn-sm" type="button" @click="copy(sentLink.url)">{{ copied ? 'Copied' : 'Copy link' }}</button>
           <p class="hint">Anyone logged in as {{ i.email }} can join with this link. Sending again replaces it.</p>

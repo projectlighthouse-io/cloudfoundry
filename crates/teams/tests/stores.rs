@@ -15,6 +15,8 @@ async fn check<S: Store<Role = TeamRole, OrgRole = OrgRole>>(t: Teams<S>) {
     assert_eq!(s.org(acme.id).await.unwrap().unwrap().name, "Acme");
     t.rename_org(&acme, "Acme Inc").await.unwrap();
     assert_eq!(s.org(acme.id).await.unwrap().unwrap().name, "Acme Inc");
+    assert_eq!(s.org_by_uuid(acme.uuid).await.unwrap().unwrap().id, acme.id, "uuid round-trips");
+    assert!(s.org_by_uuid(teams::Uuid::new()).await.unwrap().is_none());
     t.add_org_member(&acme, 2, OrgRole::Member).await.unwrap();
     t.add_org_member(&acme, 2, OrgRole::Admin).await.unwrap();
     assert_eq!(s.org_members(acme.id).await.unwrap(), [Member { user_id: 1, role: OrgRole::Owner }, Member { user_id: 2, role: OrgRole::Admin }]);
@@ -34,6 +36,9 @@ async fn check<S: Store<Role = TeamRole, OrgRole = OrgRole>>(t: Teams<S>) {
     let side2 = t.create_team(3, None, "Core").await.unwrap();
     assert_ne!(side.id, side2.id, "standalone teams share names");
     assert_eq!(s.team(side.id).await.unwrap().unwrap().org_id, None);
+    assert_eq!(s.team_by_uuid(core.uuid).await.unwrap().as_ref(), Some(&core), "uuid round-trips");
+    assert!(s.team_by_uuid(teams::Uuid::new()).await.unwrap().is_none());
+    assert_ne!(side.uuid, side2.uuid);
 
     t.add_member(&core, 2, TeamRole::Member).await.unwrap();
     t.change_role(&core, 2, TeamRole::Admin).await.unwrap();
@@ -54,7 +59,7 @@ async fn check<S: Store<Role = TeamRole, OrgRole = OrgRole>>(t: Teams<S>) {
     assert_eq!(s.team_role(core.id, 4).await.unwrap(), Some(TeamRole::Member));
     assert!(s.team_invitations(core.id).await.unwrap().is_empty());
 
-    // Leaving the organization leaves its teams; deleting cascades.
+    // Leaving the organization leaves its teams; deleting removes its teams too (the store, not the schema).
     t.remove_org_member(&acme, 4).await.unwrap();
     assert_eq!(s.team_role(core.id, 4).await.unwrap(), None);
     t.invite(Target::Team { team: side.id, role: TeamRole::Member }, "dee@example.com", 3, day).await.unwrap();

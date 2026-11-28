@@ -2,21 +2,21 @@
 
 use std::time::Duration;
 
-use auth::{Authed, Provider};
+use auth::Authed;
 use route::{
     Body, Cx, Json, Path, Redirect,
     http::Response,
 };
 use serde::{Deserialize, Serialize};
 use session::Session;
-use teams::{Org, OrgCan, OrgMembership, Store, Target, Team};
+use teams::{Invitation, Org, OrgCan, OrgMembership, Uuid, Store, Target, Team};
 use validate::Valid;
 
 use crate::{
-    access::{self, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
+    access::{self, MemberItem, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
     requests::team::{NewOrganization, OrgInvite, OrgRoleChange},
     state::App,
-    users::{User, Users},
+    users::User,
 };
 
 type Result<T> = std::result::Result<T, Response<Body>>;
@@ -25,7 +25,7 @@ const INVITATION_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Serialize)]
 pub struct OrgItem {
-    id: i64,
+    uuid: Uuid<Org>,
     name: String,
     role: OrgRole,
 }
@@ -37,16 +37,8 @@ pub struct OrgsPage {
 }
 
 #[derive(Serialize)]
-pub struct MemberItem {
-    id: i64,
-    email: String,
-    name: Option<String>,
-    role: OrgRole,
-}
-
-#[derive(Serialize)]
 pub struct InvitationItem {
-    id: i64,
+    uuid: Uuid<Invitation>,
     email: String,
     role: OrgRole,
     /// Unix seconds.
@@ -57,14 +49,14 @@ pub struct InvitationItem {
 /// can be copied: the token is not stored, so it cannot be shown later.
 #[derive(Serialize, Deserialize)]
 pub struct SentLink {
-    id: i64,
+    uuid: Uuid<Invitation>,
     url: String,
 }
 
 const SENT_LINK: &str = "teams.invitation_link";
 
 fn flash_link(app_url: &str, session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
-    let link = SentLink { id: new.invitation.id, url: access::invitation_link(app_url, &new.token) };
+    let link = SentLink { uuid: new.invitation.uuid, url: access::invitation_link(app_url, &new.token) };
     if let Err(e) = session.flash(SENT_LINK, &link) {
         tracing::error!("flashing the invitation link: {e}");
     }
@@ -81,10 +73,11 @@ pub struct Abilities {
 pub struct OrgPage {
     email: String,
     organization: Org,
-    user_id: i64,
+    /// The viewer, to mark their own row.
+    user_uuid: Uuid<User>,
     role: OrgRole,
     can: Abilities,
-    members: Vec<MemberItem>,
+    members: Vec<MemberItem<OrgRole>>,
     teams: Vec<Team>,
     invitations: Vec<InvitationItem>,
     invitation_link: Option<SentLink>,
@@ -92,21 +85,21 @@ pub struct OrgPage {
 
 #[derive(Deserialize)]
 pub struct MemberPath {
-    user: i64,
+    user: Uuid<User>,
 }
 
 #[derive(Deserialize)]
 pub struct InvitationPath {
-    invitation: i64,
+    invitation: Uuid<Invitation>,
 }
 
 fn back(org: &Org) -> Redirect {
-    Redirect::to(format!("/organizations/{}", org.id))
+    Redirect::to(format!("/organizations/{}", org.uuid))
 }
 
 pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<inertia::Page<OrgsPage>> {
     let orgs = access::teams(&cx.db).store().orgs_of(user.id).await.map_err(access::failed)?;
-    let organizations = orgs.into_iter().map(|(o, role)| OrgItem { id: o.id, name: o.name, role }).collect();
+    let organizations = orgs.into_iter().map(|(o, role)| OrgItem { uuid: o.uuid, name: o.name, role }).collect();
     Ok(inertia::render("organizations/index", OrgsPage { email: user.email.clone(), organizations }))
 }
 
@@ -117,14 +110,7 @@ pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewOrganiz
 
 pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, m: OrgMembership<OrgRole>) -> Result<inertia::Page<OrgPage>> {
     let t = access::teams(&cx.db);
-    let users = Users { db: cx.db.clone() };
-    let mut members = Vec::new();
-    // ponytail: one query per member; batch it if organizations get large.
-    for member in t.store().org_members(m.org.id).await.map_err(access::failed)? {
-        if let Ok(Some(u)) = users.find(member.user_id).await {
-            members.push(MemberItem { id: u.id, email: u.email, name: u.name, role: member.role });
-        }
-    }
+    let members = access::member_items(&cx.db, t.store().org_members(m.org.id).await.map_err(access::failed)?).await?;
     let teams = t.store().org_teams(m.org.id).await.map_err(access::failed)?;
     let invitations = t
         .store()
@@ -133,7 +119,7 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, m: OrgMembe
         .map_err(access::failed)?
         .into_iter()
         .filter_map(|i| match i.target {
-            Target::Org { role, .. } => Some(InvitationItem { id: i.id, email: i.email, role, expires_at: i.expires_at }),
+            Target::Org { role, .. } => Some(InvitationItem { uuid: i.uuid, email: i.email, role, expires_at: i.expires_at }),
             Target::Team { .. } => None,
         })
         .collect();
@@ -142,7 +128,7 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, m: OrgMembe
         "organizations/show",
         OrgPage {
             email: user.email.clone(),
-            user_id: m.user_id,
+            user_uuid: user.uuid,
             role: m.role,
             can,
             organization: m.org,
@@ -183,14 +169,16 @@ async fn guard_owner(cx: &App, can: &OrgMembership<OrgRole>, user: i64, role: Op
 }
 
 pub async fn update_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>, input: Valid<Json<OrgRoleChange>>) -> Result<Redirect> {
-    guard_owner(&cx, &can, path.user, Some(input.role)).await?;
-    access::teams(&cx.db).change_org_role(&can.org, path.user, input.role).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, Some(input.role)).await?;
+    access::teams(&cx.db).change_org_role(&can.org, user, input.role).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }
 
 pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>) -> Result<Redirect> {
-    guard_owner(&cx, &can, path.user, None).await?;
-    access::teams(&cx.db).remove_org_member(&can.org, path.user).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, None).await?;
+    access::teams(&cx.db).remove_org_member(&can.org, user).await.map_err(access::failed)?;
     Ok(back(&can.org))
 }
 

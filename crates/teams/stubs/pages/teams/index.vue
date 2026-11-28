@@ -1,14 +1,15 @@
 <script setup lang="ts">
+import type { Uuid } from '../../types/Uuid'
 import { Link, useForm } from '@inertiajs/vue3'
 import AppLayout from '../../layouts/AppLayout.vue'
 
 defineProps<{
   email: string
-  teams: { id: number; name: string; organization: string | null; role: string; current: boolean }[]
-  organizations: { id: number; name: string }[]
+  teams: { uuid: Uuid<'Team'>; name: string; organization: string | null; role: string; current: boolean }[]
+  organizations: { uuid: Uuid<'Org'>; name: string }[]
 }>()
 
-const form = useForm({ name: '', organization_id: null as number | null })
+const form = useForm({ name: '', organization: null as Uuid<'Org'> | null })
 const submit = () => form.post('/teams', { onSuccess: () => form.reset() })
 </script>
 
@@ -27,8 +28,8 @@ const submit = () => form.post('/teams', { onSuccess: () => form.reset() })
       <div class="strip"><h2 id="teams-h">Your teams</h2><span class="meta">{{ teams.length }}</span></div>
       <p v-if="teams.length === 0" class="empty-row">You are not on a team yet. Create one below, or open an invitation link.</p>
       <ul class="ledger">
-        <li v-for="t in teams" :key="t.id">
-          <Link class="who" :href="`/teams/${t.id}`">
+        <li v-for="t in teams" :key="t.uuid">
+          <Link class="who" :href="`/teams/${t.uuid}`">
             <span class="face" aria-hidden="true">{{ t.name.charAt(0).toUpperCase() }}</span>
             <span class="who-text">
               <span class="name">{{ t.name }}</span>
@@ -44,12 +45,12 @@ const submit = () => form.post('/teams', { onSuccess: () => form.reset() })
         <li id="new-team" class="form-row">
           <form class="add" @submit.prevent="submit">
             <input v-model="form.name" class="input" placeholder="Team name, e.g. Platform" aria-label="New team name" required maxlength="80" :aria-invalid="form.errors.name ? 'true' : undefined" />
-            <select v-if="organizations.length" v-model="form.organization_id" class="select" aria-label="Organization">
+            <select v-if="organizations.length" v-model="form.organization" class="select" aria-label="Organization">
               <option :value="null">Standalone</option>
-              <option v-for="o in organizations" :key="o.id" :value="o.id">{{ o.name }}</option>
+              <option v-for="o in organizations" :key="o.uuid" :value="o.uuid">{{ o.name }}</option>
             </select>
             <button class="btn btn-ink" type="submit" :disabled="form.processing">{{ form.processing ? 'Creating…' : 'Create team' }}</button>
-            <p v-if="form.errors.name || form.errors.organization_id" class="error">{{ form.errors.name ?? form.errors.organization_id }}</p>
+            <p v-if="form.errors.name || form.errors.organization" class="error">{{ form.errors.name ?? form.errors.organization }}</p>
           </form>
         </li>
       </ul>

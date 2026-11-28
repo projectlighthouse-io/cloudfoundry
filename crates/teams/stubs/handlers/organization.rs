@@ -8,11 +8,11 @@ use route::{
     http::{Response, StatusCode},
 };
 use serde::{Deserialize, Serialize};
-use teams::{Invitation, Member, Org, OrgCan, OrgMembership, Store, Target, Team};
+use teams::{Invitation, Org, OrgCan, OrgMembership, Uuid, Store, Target, Team};
 use validate::Valid;
 
 use crate::{
-    access::{self, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
+    access::{self, DeleteOrg, MemberItem, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
     requests::team::{NewOrganization, OrgInvite, OrgRoleChange},
     state::App,
     users::User,
@@ -33,19 +33,19 @@ pub struct OrgSummary {
 pub struct OrgDetail {
     #[serde(flatten)]
     summary: OrgSummary,
-    members: Vec<Member<OrgRole>>,
+    members: Vec<MemberItem<OrgRole>>,
     teams: Vec<Team>,
     invitations: Vec<Invitation<TeamRole, OrgRole>>,
 }
 
 #[derive(Deserialize)]
 pub struct MemberPath {
-    user: i64,
+    user: Uuid<User>,
 }
 
 #[derive(Deserialize)]
 pub struct InvitationPath {
-    invitation: i64,
+    invitation: Uuid<Invitation>,
 }
 
 pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<Json<Vec<OrgSummary>>> {
@@ -62,7 +62,7 @@ pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewOrganiz
 pub async fn show(cx: Cx<App>, m: OrgMembership<OrgRole>) -> Result<Json<OrgDetail>> {
     let teams = access::teams(&cx.db);
     let store = teams.store();
-    let members = store.org_members(m.org.id).await.map_err(access::failed)?;
+    let members = access::member_items(&cx.db, store.org_members(m.org.id).await.map_err(access::failed)?).await?;
     let org_teams = store.org_teams(m.org.id).await.map_err(access::failed)?;
     let invitations = store.org_invitations(m.org.id).await.map_err(access::failed)?;
     Ok(Json(OrgDetail { summary: OrgSummary { org: m.org, role: m.role }, members, teams: org_teams, invitations }))
@@ -99,15 +99,17 @@ async fn guard_owner(cx: &App, can: &OrgMembership<OrgRole>, user: i64, role: Op
 }
 
 pub async fn update_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>, input: Valid<Json<OrgRoleChange>>) -> Result<StatusCode> {
-    guard_owner(&cx, &can, path.user, Some(input.role)).await?;
-    access::teams(&cx.db).change_org_role(&can.org, path.user, input.role).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, Some(input.role)).await?;
+    access::teams(&cx.db).change_org_role(&can.org, user, input.role).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Removes them from the organization's teams too.
 pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<MemberPath>) -> Result<StatusCode> {
-    guard_owner(&cx, &can, path.user, None).await?;
-    access::teams(&cx.db).remove_org_member(&can.org, path.user).await.map_err(access::failed)?;
+    let user = access::user_id(&cx.db, path.user).await?;
+    guard_owner(&cx, &can, user, None).await?;
+    access::teams(&cx.db).remove_org_member(&can.org, user).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

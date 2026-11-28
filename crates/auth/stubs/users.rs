@@ -1,19 +1,36 @@
 //! Published by `art publish auth`. App code: change it freely.
 
-use db::Db;
+use db::{Db, Uuid};
+use serde::Serialize;
 
 use crate::state::Primary;
 
-#[derive(Clone, sqlx::FromRow)]
+/// Serializes as `{ "uuid", "name", "email" }`: the internal `id` and the
+/// secrets never leave the app.
+#[derive(Clone, Serialize, sqlx::FromRow)]
 pub struct User {
+    #[serde(skip)]
     pub id: i64,
+    /// Names the user in URLs and JSON.
+    pub uuid: Uuid<User>,
     /// Optional: the registration form may leave it out.
-    #[allow(dead_code)] // read once your pages show it
     pub name: Option<String>,
     pub email: String,
     /// `None` for accounts made through social login.
+    #[serde(skip)]
     pub password_hash: Option<String>,
+    #[serde(skip)]
     pub remember_token: Option<String>,
+}
+
+/// An API token as its owner sees it, for token management: named by
+/// `uuid` in URLs, never by `id` or the token itself.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ApiToken {
+    pub uuid: Uuid<ApiToken>,
+    pub name: String,
+    /// Unix seconds; `None` for a token that does not expire.
+    pub expires_at: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -22,9 +39,28 @@ pub struct Users {
 }
 
 impl Users {
+    /// The user's API tokens, oldest first.
+    pub async fn tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, sqlx::Error> {
+        sqlx::query_as("select uuid, name, expires_at from api_tokens where user_id = $1 order by id")
+            .bind(user_id)
+            .fetch_all(self.db.pool())
+            .await
+    }
+
+    /// Revoke one of the user's tokens by uuid. `false` if it is not theirs.
+    pub async fn delete_token_by_uuid(&self, user_id: i64, token: Uuid<ApiToken>) -> Result<bool, sqlx::Error> {
+        let done = sqlx::query("delete from api_tokens where user_id = $1 and uuid = $2")
+            .bind(user_id)
+            .bind(token)
+            .execute(self.db.pool())
+            .await?;
+        Ok(done.rows_affected() > 0)
+    }
+
     /// Insert a user and read it back. The unique index on `email` rejects duplicates.
     pub async fn create(&self, name: Option<&str>, email: &str, password_hash: &str) -> Result<User, sqlx::Error> {
-        sqlx::query("insert into users (name, email, password_hash) values ($1, $2, $3)")
+        sqlx::query("insert into users (uuid, name, email, password_hash) values ($1, $2, $3, $4)")
+            .bind(Uuid::<User>::new())
             .bind(name)
             .bind(email)
             .bind(password_hash)
@@ -33,8 +69,16 @@ impl Users {
         self.by_email(email).await?.ok_or(sqlx::Error::RowNotFound)
     }
 
+    /// The user a URL names, e.g. `/teams/{team}/members/{user}`.
+    pub async fn by_uuid(&self, uuid: Uuid<User>) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where uuid = $1")
+            .bind(uuid)
+            .fetch_optional(self.db.pool())
+            .await
+    }
+
     pub async fn by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as("select id, name, email, password_hash, remember_token from users where email = $1")
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where email = $1")
             .bind(email)
             .fetch_optional(self.db.pool())
             .await
@@ -46,7 +90,7 @@ impl auth::Provider for Users {
     type Id = i64;
 
     async fn find(&self, id: i64) -> Result<Option<User>, auth::Error> {
-        sqlx::query_as("select id, name, email, password_hash, remember_token from users where id = $1")
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where id = $1")
             .bind(id)
             .fetch_optional(self.db.pool())
             .await
@@ -107,7 +151,8 @@ impl auth::Tokens for Users {
     }
 
     async fn store_token(&self, id: i64, token: auth::NewToken) -> Result<(), auth::Error> {
-        sqlx::query("insert into api_tokens (user_id, name, token_hash, expires_at) values ($1, $2, $3, $4)")
+        sqlx::query("insert into api_tokens (uuid, user_id, name, token_hash, expires_at) values ($1, $2, $3, $4, $5)")
+            .bind(Uuid::<ApiToken>::new())
             .bind(id)
             .bind(token.name)
             .bind(token.hash)

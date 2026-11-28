@@ -4,7 +4,7 @@ use std::{
     sync::{Mutex, MutexGuard, PoisonError},
 };
 
-use crate::{Error, Invitation, Member, Org, OrgRole, Role, Store, Target, Team};
+use crate::{Error, Invitation, Member, Org, OrgRole, Uuid, Role, Store, Target, Team};
 
 /// Everything in memory, for tests and prototypes. Lost on restart.
 pub struct MemoryStore<R, O> {
@@ -72,7 +72,7 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
 
     async fn create_org(&self, owner: i64, name: &str) -> Result<Org, Error> {
         let mut s = self.lock();
-        let org = Org { id: s.id(), name: name.to_owned() };
+        let org = Org { id: s.id(), uuid: Uuid::new(), name: name.to_owned() };
         s.orgs.insert(org.id, org.clone());
         s.org_members.insert((org.id, owner), O::OWNER);
         Ok(org)
@@ -80,6 +80,10 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
 
     async fn org(&self, id: i64) -> Result<Option<Org>, Error> {
         Ok(self.lock().orgs.get(&id).cloned())
+    }
+
+    async fn org_by_uuid(&self, id: Uuid<Org>) -> Result<Option<Org>, Error> {
+        Ok(self.lock().orgs.values().find(|o| o.uuid == id).cloned())
     }
 
     async fn rename_org(&self, id: i64, name: &str) -> Result<(), Error> {
@@ -132,7 +136,7 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
         if s.name_taken(org, name, None) {
             return Err(Error::NameTaken);
         }
-        let team = Team { id: s.id(), org_id: org, name: name.to_owned() };
+        let team = Team { id: s.id(), uuid: Uuid::new(), org_id: org, name: name.to_owned() };
         s.teams.insert(team.id, team.clone());
         s.team_members.insert((team.id, owner), R::OWNER);
         Ok(team)
@@ -140,6 +144,10 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
 
     async fn team(&self, id: i64) -> Result<Option<Team>, Error> {
         Ok(self.lock().teams.get(&id).cloned())
+    }
+
+    async fn team_by_uuid(&self, id: Uuid<Team>) -> Result<Option<Team>, Error> {
+        Ok(self.lock().teams.values().find(|t| t.uuid == id).cloned())
     }
 
     async fn rename_team(&self, id: i64, name: &str) -> Result<(), Error> {
@@ -188,7 +196,7 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
 
     async fn create_invitation(&self, email: &str, target: Target<R, O>, invited_by: i64, expires_at: i64, token_hash: &str) -> Result<Invitation<R, O>, Error> {
         let mut s = self.lock();
-        let invitation = Invitation { id: s.id(), email: email.to_owned(), target, invited_by, expires_at };
+        let invitation = Invitation { id: s.id(), uuid: Uuid::new(), email: email.to_owned(), target, invited_by, expires_at };
         s.invitations.insert(invitation.id, (invitation.clone(), token_hash.to_owned()));
         Ok(invitation)
     }

@@ -218,15 +218,17 @@ export type {pascal} = { title: string, };
 
 const RESPONSE: &str = r#"use serde::Serialize;
 
-/// What a response shows of a domain value. Keeps database rows out of responses.
+/// What a response shows of a domain value. Keeps database rows out of
+/// responses: name a row by its `uuid`, never by its internal `id`.
 #[derive(Serialize)]
 pub struct {pascal} {
-    pub id: i64,
+    // pub uuid: db::Uuid<Run>,
+    pub name: String,
 }
 
 // impl From<&Run> for {pascal} {
 //     fn from(run: &Run) -> Self {
-//         Self { id: run.id }
+//         Self { uuid: run.uuid, name: run.name.clone() }
 //     }
 // }
 "#;
