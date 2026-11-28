@@ -10,7 +10,7 @@ use route::{Cx, Redirect};
 use session::Session;
 use socialite::SocialCallback;
 
-use crate::{social::SocialError, state::App, users::{User, Users}};
+use crate::{social::SocialError, state::App, users::{User, UserStore}};
 
 pub async fn callback(cx: Cx<App>, auth: Auth<User>, session: Session, social: SocialCallback) -> Redirect {
     // The login page shows this under its email field (the Inertia error bag).
@@ -25,7 +25,7 @@ pub async fn callback(cx: Cx<App>, auth: Auth<User>, session: Session, social: S
             return failed("That sign-in did not complete. Please try again.");
         }
     };
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match users.find_or_create_social(&social, auth.user()).await {
         Ok(user) => {
             auth.login(&user);

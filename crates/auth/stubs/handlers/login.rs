@@ -5,11 +5,11 @@ use auth::{AttemptError, Auth};
 use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use validate::{Errors, Valid};
 
-use crate::{requests::login::Login, state::App, users::{User, Users}};
+use crate::{requests::login::Login, state::App, users::{User, UserStore}};
 
 /// `204` when logged in; `422` with `{ "errors": { "email": [...] } }` when not.
 pub async fn login(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<Login>>) -> Result<StatusCode, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let message = match auth.attempt(&users, &input.email, &input.password, input.remember).await {
         Ok(_user) => return Ok(StatusCode::NO_CONTENT),
         Err(AttemptError::Failed) => "These credentials do not match our records.".to_owned(),

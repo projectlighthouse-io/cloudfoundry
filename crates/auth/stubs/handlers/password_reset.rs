@@ -5,7 +5,7 @@ use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use serde::Serialize;
 use validate::{Errors, Valid};
 
-use crate::{requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, Users}};
+use crate::{requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
 
 #[derive(Serialize)]
 pub struct Status {
@@ -14,7 +14,7 @@ pub struct Status {
 
 /// Always the same answer, so the endpoint does not reveal who has an account.
 pub async fn email(cx: Cx<App>, input: Valid<Json<ForgotPassword>>) -> Result<Json<Status>, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth::reset_link_token(&users, &input.email).await {
         Ok((user, token)) => send_reset_link(&cx.cfg.app_url, &user, &token),
         Err(ResetError::UnknownUser | ResetError::Throttled) => {}
@@ -37,7 +37,7 @@ fn send_reset_link(base: &str, user: &User, token: &str) {
 
 /// Set the new password, sign out "remember me" devices, and log in: `204`.
 pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ResetPassword>>) -> Result<StatusCode, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth::reset_password(&users, &input.email, &input.token, &input.password).await {
         Ok(user) => {
             users.set_remember_token(user.id, None).await.map_err(server_error)?;

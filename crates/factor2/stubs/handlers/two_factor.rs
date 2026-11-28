@@ -21,7 +21,7 @@ use crate::{
     },
     state::App,
     two_factor::two_factor,
-    users::{User, Users},
+    users::{User, UserStore},
 };
 
 type Result<T> = std::result::Result<T, Response<Body>>;
@@ -76,7 +76,7 @@ fn server_error(e: impl std::fmt::Display) -> Response<Body> {
 
 /// The password check of `handlers::login::login`, then the second factor.
 pub async fn login(cx: Cx<App>, auth: Auth<User>, session: Session, device: Device, input: Valid<Json<Login>>) -> Result<Json<LoginResult>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let user = match auth.validate(&users, &input.email, &input.password).await {
         Ok(user) => user,
         Err(AttemptError::Failed) => return Err(invalid("email", "These credentials do not match our records.")),
@@ -114,7 +114,7 @@ pub async fn challenge(cx: Cx<App>, auth: Auth<User>, session: Session, device: 
         }
         Err(ChallengeError::Other(e)) => return Err(failed(e)),
     };
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let user = users.find(passed.user_id).await.map_err(server_error)?.ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
     if passed.remember { auth.login_remember(&user) } else { auth.login(&user) }
     if let Some(remaining) = passed.backup_codes_left {

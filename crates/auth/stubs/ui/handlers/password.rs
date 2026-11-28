@@ -5,7 +5,7 @@ use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use serde::Serialize;
 use validate::{Errors, Valid};
 
-use crate::{requests::password::ChangePassword, state::App, users::{User, Users}};
+use crate::{requests::password::ChangePassword, state::App, users::{User, UserStore}};
 
 #[derive(Serialize)]
 pub struct PasswordPage {
@@ -20,7 +20,7 @@ pub async fn edit(user: Authed<User>) -> inertia::Page<PasswordPage> {
 /// Check the current password, store the new one. The session gets a new id
 /// and "remember me" cookies stop working; the user stays logged in here.
 pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ChangePassword>>) -> Result<inertia::Page<PasswordPage>, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth.change_password(&users, &input.current_password, &input.password).await {
         Ok(()) => {
             let email = auth.user().map(|u| u.email.clone()).unwrap_or_default();

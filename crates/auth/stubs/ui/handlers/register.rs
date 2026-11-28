@@ -4,7 +4,7 @@ use auth::Auth;
 use route::{Body, Cx, IntoResponse, Json, Redirect, http::{Response, StatusCode}};
 use validate::{Errors, Valid};
 
-use crate::{requests::register::Register, state::App, users::{User, Users}};
+use crate::{requests::register::Register, state::App, users::{User, UserStore}};
 
 pub async fn show(_: ()) -> inertia::Page<()> {
     inertia::render("auth/register", ())
@@ -13,7 +13,7 @@ pub async fn show(_: ()) -> inertia::Page<()> {
 /// Create the account and log it in. Add your own steps here (welcome mail,
 /// default team, ...).
 pub async fn store(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<Register>>) -> Result<Redirect, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let server_error = |e: &dyn std::fmt::Display| {
         tracing::error!("register: {e}");
         StatusCode::INTERNAL_SERVER_ERROR.into_response()

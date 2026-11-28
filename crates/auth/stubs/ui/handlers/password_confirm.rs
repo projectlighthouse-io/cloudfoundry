@@ -9,7 +9,7 @@ use serde::Serialize;
 use ts_rs::TS;
 use validate::{Errors, Valid};
 
-use crate::{requests::password_confirm::ConfirmPassword, state::App, users::{User, Users}};
+use crate::{requests::password_confirm::ConfirmPassword, state::App, users::{User, UserStore}};
 
 /// Props for `resources/js/pages/auth/confirm-password.vue`.
 #[derive(Serialize, TS)]
@@ -24,7 +24,7 @@ pub async fn show(user: Authed<User>) -> inertia::Page<ConfirmPasswordPage> {
 
 /// Confirmed for `auth::Config::password_timeout`; back to the intended page.
 pub async fn store(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ConfirmPassword>>) -> Result<Redirect, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth.confirm_password(&users, &input.password).await {
         Ok(()) => Ok(Redirect::to(auth.intended("/"))),
         Err(ChangeError::WrongPassword | ChangeError::NoPassword) => {

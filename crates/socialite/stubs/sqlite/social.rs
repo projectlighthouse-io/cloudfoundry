@@ -12,7 +12,7 @@ use socialite::SocialUser;
 /// report your users' email addresses, unverified, can sign in as them.
 pub const TRUST_UNVERIFIED_EMAILS: bool = false;
 
-use crate::users::{User, Users};
+use crate::users::{User, UserStore};
 
 /// Why a social login could not produce a user.
 #[derive(Debug)]
@@ -31,7 +31,7 @@ impl From<sqlx::Error> for SocialError {
     }
 }
 
-impl Users {
+impl UserStore {
     /// The user linked to this provider account, if any.
     pub async fn by_social(&self, provider: &str, provider_id: &str) -> Result<Option<User>, sqlx::Error> {
         sqlx::query_as(

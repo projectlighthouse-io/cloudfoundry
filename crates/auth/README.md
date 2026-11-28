@@ -8,7 +8,7 @@ auth = { git = "https://github.com/projectlighthouse-io/toolkit" }
 ```
 
 ```rust
-impl auth::Provider for Users {
+impl auth::Provider for UserStore {
     type User = User;
     type Id = i64;
     async fn find(&self, id: i64) -> Result<Option<User>, auth::Error> { /* query */ }
@@ -61,8 +61,8 @@ remember_for = "30d"
 
 The published `users` table has a `uuid` column (`db::Uuid<User>`, UUIDv7, app-generated) and so does
 `api_tokens`. The published `User` serializes as `{ "uuid", "name", "email" }`: `id`, the password hash and the
-remember token are `#[serde(skip)]`. Name users and tokens by `uuid` in URLs (`Users::by_uuid`,
-`Users::delete_token_by_uuid`); the internal `id` is for queries. Apps need `db`'s `uuid` feature (on in `art new`).
+remember token are `#[serde(skip)]`. Name users and tokens by `uuid` in URLs (`UserStore::by_uuid`,
+`UserStore::delete_token_by_uuid`); the internal `id` is for queries. Apps need `db`'s `uuid` feature (on in `art new`).
 
 Sudo mode: `auth.confirm_password(&users, password)` stamps the session; a handler taking
 `auth::PasswordConfirmed<User>` runs only within `Config::password_timeout` (3 hours) of that. Otherwise page

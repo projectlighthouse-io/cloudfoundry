@@ -7,11 +7,11 @@ use auth::{Auth, ChangeError};
 use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use validate::{Errors, Valid};
 
-use crate::{requests::password_confirm::ConfirmPassword, state::App, users::{User, Users}};
+use crate::{requests::password_confirm::ConfirmPassword, state::App, users::{User, UserStore}};
 
 /// `204` once confirmed (valid for `auth::Config::password_timeout`); `422` when wrong.
 pub async fn store(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ConfirmPassword>>) -> Result<StatusCode, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth.confirm_password(&users, &input.password).await {
         Ok(()) => Ok(StatusCode::NO_CONTENT),
         Err(ChangeError::WrongPassword | ChangeError::NoPassword) => {

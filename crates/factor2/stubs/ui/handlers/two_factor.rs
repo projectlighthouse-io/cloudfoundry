@@ -22,7 +22,7 @@ use crate::{
     },
     state::App,
     two_factor::two_factor,
-    users::{User, Users},
+    users::{User, UserStore},
 };
 
 type Result<T> = std::result::Result<T, Response<Body>>;
@@ -79,7 +79,7 @@ fn with_cookie(redirect: Redirect, cookie: &str) -> Result<Response<Body>> {
 
 /// The password check of `handlers::login::login`, then the second factor.
 pub async fn login(cx: Cx<App>, auth: Auth<User>, session: Session, device: Device, input: Valid<Json<Login>>) -> Result<Redirect> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let user = match auth.validate(&users, &input.email, &input.password).await {
         Ok(user) => user,
         Err(AttemptError::Failed) => return Err(invalid("email", "These credentials do not match our records.")),
@@ -128,7 +128,7 @@ pub async fn challenge(cx: Cx<App>, auth: Auth<User>, session: Session, device: 
         }
         Err(ChallengeError::Other(e)) => return Err(failed(e)),
     };
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     let Some(user) = users.find(passed.user_id).await.map_err(server_error)? else { return Ok(Redirect::to_route("login").into_response()) };
     if passed.remember { auth.login_remember(&user) } else { auth.login(&user) }
     if let Some(remaining) = passed.backup_codes_left {

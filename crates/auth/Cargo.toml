@@ -105,7 +105,7 @@ toml = "0.9"
 
 [package.metadata.art]
 agents = """
-- Users: `src/users.rs` implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
+- Users: `src/users.rs` has `User` and `UserStore`, which implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
 - `User` and `ApiToken` are named by `uuid` (`db::Uuid<T>`); `id` is `#[serde(skip)]`. Both derive `ts_rs::TS` and export to `resources/js/types/` (`db` needs feature `ts`, on in `art new`).
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
 - Sudo mode: take `auth::PasswordConfirmed<User>` (not `Authed<User>`) in handlers for dangerous actions (disable 2FA, delete account); the user re-enters their password at `password.confirm`, valid `auth::Config::password_timeout` (3h). `auth.validate(...)` checks a password without logging in (for a second factor).
@@ -117,7 +117,7 @@ Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db:
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
   src/main.rs           mod users;
-                        .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
+                        .layer(auth::layer(users::UserStore { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
   src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
@@ -145,7 +145,7 @@ Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db:
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
   src/main.rs           mod users;
-                        .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
+                        .layer(auth::layer(users::UserStore { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
   src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;

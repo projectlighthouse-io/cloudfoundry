@@ -154,7 +154,7 @@ pub fn invalid(field: &'static str, message: &'static str) -> Response<Body> {
 /// 422 on `email` when that address already belongs to a member of the
 /// team or organization. The store keeps user ids, so this is the app's check.
 pub async fn not_a_member(db: &Db<Primary>, target: teams::Target<TeamRole, OrgRole>, email: &str) -> Result<(), Response<Body>> {
-    let user = match (crate::users::Users { db: db.clone() }).by_email(email).await {
+    let user = match (crate::users::UserStore { db: db.clone() }).by_email(email).await {
         Ok(Some(user)) => user,
         Ok(None) => return Ok(()),
         Err(e) => {
@@ -182,7 +182,7 @@ pub struct MemberItem<R> {
 
 /// Members with their users' uuids, names and emails. Members whose user is gone are left out.
 pub async fn member_items<R>(db: &Db<Primary>, members: Vec<teams::Member<R>>) -> Result<Vec<MemberItem<R>>, Response<Body>> {
-    let users = crate::users::Users { db: db.clone() };
+    let users = crate::users::UserStore { db: db.clone() };
     let mut out = Vec::with_capacity(members.len());
     // ponytail: one query per member; fine for team-sized lists, batch it if teams get large.
     for m in members {
@@ -200,7 +200,7 @@ pub async fn member_items<R>(db: &Db<Primary>, members: Vec<teams::Member<R>>) -
 
 /// The internal id of the user `{user}` names. `404` if there is none.
 pub async fn user_id(db: &Db<Primary>, user: teams::Uuid<crate::users::User>) -> Result<i64, Response<Body>> {
-    match (crate::users::Users { db: db.clone() }).by_uuid(user).await {
+    match (crate::users::UserStore { db: db.clone() }).by_uuid(user).await {
         Ok(Some(u)) => Ok(u.id),
         Ok(None) => Err(StatusCode::NOT_FOUND.into_response()),
         Err(e) => {

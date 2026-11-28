@@ -38,11 +38,11 @@ pub struct ApiToken {
 }
 
 #[derive(Clone)]
-pub struct Users {
+pub struct UserStore {
     pub db: Db<Primary>,
 }
 
-impl Users {
+impl UserStore {
     /// The user's API tokens, oldest first.
     pub async fn tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, sqlx::Error> {
         sqlx::query_as("select uuid, name, expires_at from api_tokens where user_id = ? order by id")
@@ -89,7 +89,7 @@ impl Users {
     }
 }
 
-impl auth::Provider for Users {
+impl auth::Provider for UserStore {
     type User = User;
     type Id = i64;
 
@@ -107,7 +107,7 @@ impl auth::Provider for Users {
 }
 
 /// Login with email and password: `auth.attempt(&users, email, password, remember)`.
-impl auth::Credentials for Users {
+impl auth::Credentials for UserStore {
     async fn by_login(&self, email: &str) -> Result<Option<User>, auth::Error> {
         Ok(self.by_email(email).await?)
     }
@@ -127,7 +127,7 @@ impl auth::Credentials for Users {
 }
 
 /// "Remember me": enable with `auth::layer(users).remember(codec)`.
-impl auth::Remember for Users {
+impl auth::Remember for UserStore {
     fn remember_token(&self, user: &User) -> Option<String> {
         user.remember_token.clone()
     }
@@ -144,7 +144,7 @@ impl auth::Remember for Users {
 
 /// API tokens: enable with `.tokens()` on the auth layer, issue with
 /// `auth::issue_token(&users, &user, "cli", Some(ttl))`.
-impl auth::Tokens for Users {
+impl auth::Tokens for UserStore {
     async fn by_token_hash(&self, hash: &str) -> Result<Option<(User, Option<i64>)>, auth::Error> {
         let row: Option<(i64, Option<i64>)> = sqlx::query_as("select user_id, expires_at from api_tokens where token_hash = ?")
             .bind(hash)
@@ -173,7 +173,7 @@ impl auth::Tokens for Users {
 }
 
 /// "Forgot password": `auth::reset_link_token` / `auth::reset_password`.
-impl auth::Resets for Users {
+impl auth::Resets for UserStore {
     async fn store_reset(&self, id: i64, hash: String, created_at: i64) -> Result<(), auth::Error> {
         let mut tx = self.db.pool().begin().await?;
         sqlx::query("delete from password_resets where user_id = ?").bind(id).execute(&mut *tx).await?;

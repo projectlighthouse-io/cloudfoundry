@@ -5,7 +5,7 @@ use route::{Body, Cx, IntoResponse, Json, Path, Query, Redirect, http::{Response
 use serde::{Deserialize, Serialize};
 use validate::{Errors, Valid};
 
-use crate::{requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, Users}};
+use crate::{requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
 
 #[derive(Serialize)]
 pub struct Forgot {
@@ -18,7 +18,7 @@ pub async fn request(_: ()) -> inertia::Page<Forgot> {
 
 /// Always the same answer, so the form does not reveal who has an account.
 pub async fn email(cx: Cx<App>, input: Valid<Json<ForgotPassword>>) -> Result<inertia::Page<Forgot>, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth::reset_link_token(&users, &input.email).await {
         Ok((user, token)) => send_reset_link(&cx.cfg.app_url, &user, &token),
         Err(ResetError::UnknownUser | ResetError::Throttled) => {}
@@ -57,7 +57,7 @@ pub async fn edit(Path(token): Path<String>, Query(q): Query<EmailQuery>) -> ine
 
 /// Set the new password, sign out "remember me" devices, and log in.
 pub async fn update(cx: Cx<App>, auth: Auth<User>, input: Valid<Json<ResetPassword>>) -> Result<Redirect, Response<Body>> {
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match auth::reset_password(&users, &input.email, &input.token, &input.password).await {
         Ok(user) => {
             users.set_remember_token(user.id, None).await.map_err(server_error)?;

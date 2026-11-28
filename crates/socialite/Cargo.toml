@@ -77,7 +77,7 @@ toml = "0.9"
 [package.metadata.art]
 agents = """
 - Each provider is a Cargo feature (`google`, `github`, ...) plus `route`; `socialite::routes(&mut r, provider, handlers::social::callback)` adds `/auth/{provider}` and its callback.
-- Account linking lives in `src/social.rs` (`Users::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`.
+- Account linking lives in `src/social.rs` (`UserStore::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`.
 - Provider credentials live in `[socialite.<provider>]` in config (`ProviderConfig`, feature `configured`); build with `GitHub::from_config(cfg)?`. Secrets come from `required_secret_env(...)`, never literals.
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/socialite.md"""
 notes = """

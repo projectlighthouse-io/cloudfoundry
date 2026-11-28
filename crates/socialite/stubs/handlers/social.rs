@@ -7,7 +7,7 @@ use auth::Auth;
 use route::{Cx, Redirect};
 use socialite::SocialCallback;
 
-use crate::{social::SocialError, state::App, users::{User, Users}};
+use crate::{social::SocialError, state::App, users::{User, UserStore}};
 
 /// Logs the user in and sends them to your frontend (`app_url` in config). On failure the
 /// reason is in the `social_error` query parameter.
@@ -20,7 +20,7 @@ pub async fn callback(cx: Cx<App>, auth: Auth<User>, social: SocialCallback) -> 
             return Redirect::to(format!("{base}/?social_error=declined"));
         }
     };
-    let users = Users { db: cx.db.clone() };
+    let users = UserStore { db: cx.db.clone() };
     match users.find_or_create_social(&social, auth.user()).await {
         Ok(user) => {
             auth.login(&user);
