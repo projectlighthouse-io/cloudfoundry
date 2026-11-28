@@ -1,0 +1,138 @@
+[package]
+name = "factor2"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Two-factor authentication: TOTP, backup codes and trusted browsers"
+
+[dependencies]
+base64 = "0.22"
+crypt = { path = "../crypt" }
+db = { path = "../db", features = ["uuid"] }
+getrandom = "0.3"
+percent-encoding = "2"
+qrcode = { version = "0.15", default-features = false, features = ["std", "svg"] }
+route = { path = "../route" }
+securecookie = { path = "../securecookie" }
+serde = { version = "1", features = ["derive"] }
+session = { path = "../session", features = ["route"] }
+sha2 = "0.10"
+totp-rs = { version = "5.7", default-features = false }
+tracing = "0.1"
+
+configured = { path = "../configured", default-features = false, optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "uuid"], optional = true }
+throttle = { path = "../throttle", optional = true }
+ts-rs = { version = "12", optional = true }
+
+[features]
+# SQL stores. Publish the tables with `art publish factor2 [--driver sqlite|mysql]`.
+postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+# `TwoFactor::throttle(limiter)`: limit failed challenge attempts per user and IP.
+throttle = ["dep:throttle"]
+# `Config` deserializes through `configured` (durations as "30d", "5m").
+configured = ["dep:configured"]
+# `ts_rs::TS` for `TrustedDevice`, for page prop types.
+ts = ["dep:ts-rs", "db/ts"]
+
+[dev-dependencies]
+auth = { path = "../auth" }
+http-body-util = "0.1"
+password = { path = "../password" }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+totp-rs = { version = "5.7", default-features = false }
+
+[package.metadata.art.publish]
+"stubs/two_factor.rs" = "src/two_factor.rs"
+"stubs/handlers/two_factor.rs" = "src/handlers/two_factor.rs"
+"stubs/requests/two_factor.rs" = "src/requests/two_factor.rs"
+"stubs/migrations/create_two_factor.up.sql" = "migrations/{timestamp}_create_two_factor.up.sql"
+"stubs/migrations/create_two_factor.down.sql" = "migrations/{timestamp}_create_two_factor.down.sql"
+
+[package.metadata.art.publish-sqlite]
+"stubs/sqlite/two_factor.rs" = "src/two_factor.rs"
+"stubs/handlers/two_factor.rs" = "src/handlers/two_factor.rs"
+"stubs/requests/two_factor.rs" = "src/requests/two_factor.rs"
+"stubs/migrations/sqlite/create_two_factor.up.sql" = "migrations/{timestamp}_create_two_factor.up.sql"
+"stubs/migrations/create_two_factor.down.sql" = "migrations/{timestamp}_create_two_factor.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/mysql/two_factor.rs" = "src/two_factor.rs"
+"stubs/handlers/two_factor.rs" = "src/handlers/two_factor.rs"
+"stubs/requests/two_factor.rs" = "src/requests/two_factor.rs"
+"stubs/migrations/mysql/create_two_factor.up.sql" = "migrations/{timestamp}_create_two_factor.up.sql"
+"stubs/migrations/create_two_factor.down.sql" = "migrations/{timestamp}_create_two_factor.down.sql"
+
+# `art publish factor2 --with-ui`: Inertia handlers and Vue pages.
+[package.metadata.art.with-ui]
+"stubs/ui/handlers/two_factor.rs" = "src/handlers/two_factor.rs"
+"stubs/pages/settings/two-factor.vue" = "resources/js/pages/settings/two-factor.vue"
+"stubs/pages/two-factor-challenge.vue" = "resources/js/pages/auth/two-factor-challenge.vue"
+# What `cargo test export_bindings` (`art dev`) writes from the handlers' `#[ts(export)]` props.
+"stubs/types/TwoFactorPage.ts" = "resources/js/types/TwoFactorPage.ts"
+"stubs/types/Status.ts" = "resources/js/types/Status.ts"
+"stubs/types/Setup.ts" = "resources/js/types/Setup.ts"
+"stubs/types/TrustedDevice.ts" = "resources/js/types/TrustedDevice.ts"
+
+[package.metadata.art]
+agents = """
+- Two-factor (`factor2`): `src/two_factor.rs` builds the app's one `TwoFactor` (`two_factor(&app)`); handlers in `src/handlers/two_factor.rs`. `POST /login` goes to `handlers::two_factor::login`, which checks the password with `auth.validate` and then logs in or starts the challenge (`TwoFactor::begin`); `challenge` finishes with `auth.login`.
+- Codes: TOTP SHA-1, 6 digits, 30 s, ±1 step, each step once. Backup codes are single use and stored hashed: show them only right after `confirm` / `regenerate_backup_codes`. Secrets are sealed with `crypt` from APP_KEY.
+- Disabling and regenerating take `auth::PasswordConfirmed<User>` (sudo mode). Emit `factor2::events::*` from handlers with `app.events.emit(app, e)`.
+- Before deleting a user, call `two_factor(&app).disable(user_id)` (no cascades)."""
+notes = """
+Needs `art publish auth` first (its `users` table, `Login` request and confirm-password stubs).
+Add the dependencies `factor2 = { <same source as auth>, features = ["<driver>", "throttle"] }` and
+`crypt = { <same source as auth> }` (`<driver>` is sqlite, postgres or mysql), then:
+
+  src/main.rs           mod two_factor;
+  src/handlers/mod.rs   pub mod two_factor;
+  src/requests/mod.rs   pub mod two_factor;
+  src/routes.rs         r.post("/login", handlers::two_factor::login).name("login");   // instead of handlers::login::login
+                        r.post("/two-factor-challenge", handlers::two_factor::challenge).name("two-factor.challenge");
+                        r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/two-factor", handlers::two_factor::show).name("two-factor.show");
+                            r.post("/two-factor", handlers::two_factor::enable).name("two-factor.enable");
+                            r.post("/two-factor/confirm", handlers::two_factor::confirm).name("two-factor.confirm");
+                            r.delete("/two-factor", handlers::two_factor::disable).name("two-factor.disable");
+                            r.post("/two-factor/backup-codes", handlers::two_factor::regenerate).name("two-factor.backup-codes");
+                            r.delete("/two-factor/devices/{device}", handlers::two_factor::revoke).name("two-factor.devices.destroy");
+                        });
+
+Then run `art migrate` (after auth's migration: the tables reference users). Turning two-factor
+off and new backup codes need sudo mode (`auth::PasswordConfirmed`, auth's confirm-password stubs).
+Events in `factor2::events` are emitted for listeners in src/events.rs. Before deleting a user, call
+`two_factor(&app).disable(id)`: there are no cascades."""
+with-ui-notes = """
+Needs `art publish auth --with-ui` first (its `users` table, `Login` request and confirm-password page).
+Add the dependencies `factor2 = { <same source as auth>, features = ["<driver>", "throttle", "ts"] }` and
+`crypt = { <same source as auth> }` (`<driver>` is sqlite, postgres or mysql), then:
+
+  src/main.rs           mod two_factor;
+  src/handlers/mod.rs   pub mod two_factor;
+  src/requests/mod.rs   pub mod two_factor;
+  src/routes.rs         r.post("/login", handlers::two_factor::login).name("login.store");   // instead of handlers::login::login
+                        r.get("/two-factor-challenge", handlers::two_factor::challenge_page).name("two-factor.login");
+                        r.post("/two-factor-challenge", handlers::two_factor::challenge).name("two-factor.challenge");
+                        r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/two-factor", handlers::two_factor::show).name("two-factor.show");
+                            r.post("/two-factor", handlers::two_factor::enable).name("two-factor.enable");
+                            r.post("/two-factor/confirm", handlers::two_factor::confirm).name("two-factor.confirm");
+                            r.delete("/two-factor", handlers::two_factor::disable).name("two-factor.disable");
+                            r.post("/two-factor/backup-codes", handlers::two_factor::regenerate).name("two-factor.backup-codes");
+                            r.delete("/two-factor/devices/{device}", handlers::two_factor::revoke).name("two-factor.devices.destroy");
+                        });
+
+Then run `art migrate` (after auth's migration: the tables reference users). Turning two-factor
+off and new backup codes need sudo mode (`auth::PasswordConfirmed`, auth's confirm-password stubs).
+Events in `factor2::events` are emitted for listeners in src/events.rs. Before deleting a user, call
+`two_factor(&app).disable(id)`: there are no cascades.
+Link /settings/two-factor from your settings navigation."""
+
+[lints]
+workspace = true
