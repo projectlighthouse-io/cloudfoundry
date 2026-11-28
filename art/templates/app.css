@@ -212,6 +212,6 @@ a.who:hover .name { text-decoration: underline; text-decoration-color: var(--lin
   .setting { grid-template-columns: 1fr }
   .setting > div + div { border-left: 0; padding-top: 0 }
   .role { min-width: 0 }
-  .who { min-width: 0 }
+  .who { min-width: 0; flex-basis: 160px }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important } }
