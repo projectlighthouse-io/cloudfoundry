@@ -71,6 +71,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/pages/organizations/index.vue" = "resources/js/pages/organizations/index.vue"
 "stubs/pages/organizations/show.vue" = "resources/js/pages/organizations/show.vue"
 "stubs/pages/invitations/show.vue" = "resources/js/pages/invitations/show.vue"
+"stubs/components/TeamMembers.vue" = "resources/js/components/TeamMembers.vue"
+"stubs/components/TeamSettings.vue" = "resources/js/components/TeamSettings.vue"
 
 [package.metadata.art]
 agents = """
@@ -149,7 +151,9 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                         });
 
 Then run `art migrate`. Roles and permissions are in src/access.rs. Invitation
-links are logged until you send them by mail (`send_invitation` in src/access.rs)."""
+links are logged until you send them by mail (`send_invitation` in src/access.rs).
+Add `{ href: '/teams', label: 'Teams' }` and `{ href: '/organizations', label: 'Organizations' }`
+to `links` in resources/js/components/UserMenu.vue."""
 
 [lints]
 workspace = true

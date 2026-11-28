@@ -89,6 +89,11 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         ("resources/js/app.ts", APP_TS),
         ("resources/js/ssr.ts", SSR_TS),
         ("resources/js/pages/home.vue", HOME_VUE),
+        ("resources/css/app.css", include_str!("../templates/app.css")),
+        ("resources/js/layouts/AppLayout.vue", include_str!("../templates/AppLayout.vue")),
+        ("resources/js/layouts/AuthLayout.vue", include_str!("../templates/AuthLayout.vue")),
+        ("resources/js/components/Field.vue", include_str!("../templates/Field.vue")),
+        ("resources/js/components/UserMenu.vue", include_str!("../templates/UserMenu.vue")),
         ("resources/js/types/Home.ts", HOME_TS),
         (".cargo/config.toml", CARGO_CONFIG),
         ("resources/views/app.html", APP_HTML),
@@ -141,6 +146,8 @@ Trust the docs over memory: these crates are not in most training data.
 | `src/actions/`, `src/jobs/`, `src/events/`, `src/commands/`, `src/middleware/` | Units of work, queued jobs, events, CLI commands, tower layers |
 | `migrations/` | sqlx migrations |
 | `resources/js/pages/` | Vue pages, rendered by Inertia |
+| `resources/js/layouts/`, `resources/js/components/` | `AppLayout` (signed-in pages; `wide` for landing pages), `AuthLayout`, `Field`, `UserMenu` (add links there) |
+| `resources/css/app.css` | Design tokens and classes: buttons, fields, page head (`phead`), label strips (`strip`), hairline rows (`ledger`) |
 
 ## Commands
 
@@ -533,7 +540,8 @@ export default defineConfig(({ command, isSsrBuild }) => ({
 }))
 "#;
 
-const APP_TS: &str = r#"import { createInertiaApp } from '@inertiajs/vue3'
+const APP_TS: &str = r#"import '../css/app.css'
+import { createInertiaApp } from '@inertiajs/vue3'
 import { createApp, createSSRApp, h, type DefineComponent } from 'vue'
 
 const pages = import.meta.glob<DefineComponent>('./pages/**/*.vue')
@@ -574,16 +582,23 @@ createServer(
 "#;
 
 const HOME_VUE: &str = r#"<script setup lang="ts">
+import AppLayout from '../layouts/AppLayout.vue'
 import type { Home } from '../types/Home'
 
 defineProps<Home>()
 </script>
 
 <template>
-  <main>
-    <h1>{{ app_name }}</h1>
-    <p>It works.</p>
-  </main>
+  <AppLayout :title="app_name" wide>
+    <section class="hero">
+      <div class="hero-tex" aria-hidden="true" />
+      <div class="hero-in">
+        <p class="eyebrow mono">{{ app_name }}</p>
+        <h1>It works.</h1>
+        <p class="lede">Edit <code>resources/js/pages/home.vue</code>, or publish a module's pages with <code>art publish &lt;crate&gt; --with-ui</code>.</p>
+      </div>
+    </section>
+  </AppLayout>
 </template>
 "#;
 
@@ -593,6 +608,9 @@ const APP_HTML: &str = r#"<!doctype html>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{name}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" />
     {{ head }}
   </head>
   <body>

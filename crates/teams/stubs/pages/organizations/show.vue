@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { Link, router, useForm } from '@inertiajs/vue3'
+import { Link, useForm } from '@inertiajs/vue3'
+import TeamMembers from '../../components/TeamMembers.vue'
+import TeamSettings from '../../components/TeamSettings.vue'
+import AppLayout from '../../layouts/AppLayout.vue'
 
 const props = defineProps<{
   email: string
@@ -12,89 +15,51 @@ const props = defineProps<{
   invitations: { id: number; email: string; role: string }[]
 }>()
 
-const roles = ['owner', 'admin', 'member']
 const base = `/organizations/${props.organization.id}`
-
-const rename = useForm({ name: props.organization.name })
-const invite = useForm({ email: '', role: 'member' })
+const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')
 const team = useForm({ name: '', organization_id: props.organization.id })
-
-const changeRole = (user: number, role: string) => router.put(`${base}/members/${user}`, { role }, { preserveScroll: true })
-const remove = (user: number) => confirm('Remove this member from the organization and its teams?') && router.delete(`${base}/members/${user}`, { preserveScroll: true })
-const revoke = (id: number) => router.delete(`${base}/invitations/${id}`, { preserveScroll: true })
-const leave = () => confirm('Leave this organization and its teams?') && router.delete(`${base}/membership`)
-const destroy = () => confirm(`Delete ${props.organization.name} and all of its teams? This cannot be undone.`) && router.delete(base)
 </script>
 
 <template>
-  <main>
-    <p><Link href="/organizations">All organizations</Link></p>
-    <h1>{{ organization.name }}</h1>
-    <p>Your role: {{ role }}</p>
+  <AppLayout :title="organization.name" :user="email">
+    <p class="label-row"><Link href="/organizations">Organizations</Link></p>
+    <header class="phead">
+      <div class="phead-id">
+        <span class="tile" aria-hidden="true">{{ organization.name.charAt(0).toUpperCase() }}</span>
+        <div>
+          <h1>{{ organization.name }}</h1>
+          <p class="sub">You are {{ article(role) }} {{ role }}. Owners and admins manage every team in it.</p>
+        </div>
+      </div>
+    </header>
 
-    <form v-if="can.rename" @submit.prevent="rename.put(base)">
-      <label>
-        Name
-        <input v-model="rename.name" required maxlength="80" />
-      </label>
-      <p v-if="rename.errors.name">{{ rename.errors.name }}</p>
-      <button type="submit" :disabled="rename.processing">Rename</button>
-    </form>
-
-    <h2>Teams</h2>
-    <ul>
-      <li v-for="t in teams" :key="t.id"><Link :href="`/teams/${t.id}`">{{ t.name }}</Link></li>
-    </ul>
-    <form @submit.prevent="team.post('/teams')">
-      <label>
-        New team
-        <input v-model="team.name" required maxlength="80" />
-      </label>
-      <p v-if="team.errors.name">{{ team.errors.name }}</p>
-      <button type="submit" :disabled="team.processing">Create team</button>
-    </form>
-
-    <h2>Members</h2>
-    <p v-if="$page.props.errors?.role">{{ $page.props.errors.role }}</p>
-    <ul>
-      <li v-for="member in members" :key="member.id">
-        {{ member.name ?? member.email }}
-        <template v-if="can.manage_members && member.id !== user_id">
-          <select :value="member.role" @change="changeRole(member.id, ($event.target as HTMLSelectElement).value)">
-            <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
-          </select>
-          <button type="button" @click="remove(member.id)">Remove</button>
-        </template>
-        <span v-else> · {{ member.role }}</span>
-      </li>
-    </ul>
-
-    <template v-if="can.manage_members">
-      <h2>Invite</h2>
-      <form @submit.prevent="invite.post(`${base}/invitations`, { onSuccess: () => invite.reset(), preserveScroll: true })">
-        <label>
-          Email
-          <input v-model="invite.email" type="email" required />
-        </label>
-        <p v-if="invite.errors.email">{{ invite.errors.email }}</p>
-        <label>
-          Role
-          <select v-model="invite.role">
-            <option v-for="r in roles" :key="r" :value="r">{{ r }}</option>
-          </select>
-        </label>
-        <button type="submit" :disabled="invite.processing">Send invitation</button>
-      </form>
-      <ul v-if="invitations.length">
-        <li v-for="i in invitations" :key="i.id">
-          {{ i.email }} · {{ i.role }}
-          <button type="button" @click="revoke(i.id)">Withdraw</button>
+    <section aria-labelledby="teams-h">
+      <div class="strip"><h2 id="teams-h">Teams</h2><span class="meta">{{ teams.length }}</span></div>
+      <ul class="ledger">
+        <li v-for="t in teams" :key="t.id">
+          <Link class="who" :href="`/teams/${t.id}`">
+            <span class="face" aria-hidden="true">{{ t.name.charAt(0).toUpperCase() }}</span>
+            <span class="who-text"><span class="name">{{ t.name }}</span></span>
+          </Link>
+          <svg class="ic chev-r" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
+        </li>
+        <li id="new-team" class="form-row">
+          <form class="add" @submit.prevent="team.post('/teams')">
+            <input v-model="team.name" class="input" placeholder="Team name, e.g. Platform" aria-label="New team name" required maxlength="80" :aria-invalid="team.errors.name ? 'true' : undefined" />
+            <button class="btn btn-line" type="submit" :disabled="team.processing">{{ team.processing ? 'Creating…' : 'Create team' }}</button>
+            <p v-if="team.errors.name" class="error">{{ team.errors.name }}</p>
+          </form>
         </li>
       </ul>
-    </template>
+    </section>
 
-    <h2>Leave or delete</h2>
-    <button type="button" @click="leave">Leave organization</button>
-    <button v-if="can.delete" type="button" @click="destroy">Delete organization</button>
-  </main>
+    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :can-manage="can.manage_members" :can-invite="can.manage_members" remove-note="They also leave every team in this organization." />
+
+    <TeamSettings
+      :base="base" kind="organization" :name="organization.name"
+      :can-rename="can.rename" :can-leave="true" :can-delete="can.delete"
+      leave-note="You also leave its teams. The last owner cannot leave; make someone else an owner first."
+      delete-note="Deletes every team in it, their members and pending invitations. This cannot be undone."
+    />
+  </AppLayout>
 </template>
