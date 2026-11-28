@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { router, useForm } from '@inertiajs/vue3'
-import { ref } from 'vue'
+import { router, useForm, usePage } from '@inertiajs/vue3'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   base: string
@@ -16,6 +16,9 @@ const props = defineProps<{
 const opts = { preserveScroll: true }
 const rename = useForm({ name: props.name })
 const typed = ref('')
+const page = usePage()
+// `team`: teams are required and this is the user's last one.
+const teamError = computed(() => (page.props.errors as Record<string, string> | undefined)?.team)
 const leave = () => confirm(`Leave ${props.name}?`) && router.delete(`${props.base}/membership`)
 const destroy = () => typed.value === props.name && router.delete(props.base)
 </script>
@@ -40,6 +43,7 @@ const destroy = () => typed.value === props.name && router.delete(props.base)
 
   <section v-if="canLeave || canDelete" aria-labelledby="danger-h">
     <div class="strip strip-danger"><h2 id="danger-h">Danger zone</h2></div>
+    <p v-if="teamError" class="flash" role="alert">{{ teamError }}</p>
     <div v-if="canLeave" class="setting">
       <div>
         <h3>Leave {{ kind }}</h3>

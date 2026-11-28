@@ -10,7 +10,7 @@ use route::{
     http::{Method, Request, header, request::Parts},
 };
 use securecookie::{Codec, Keys};
-use teams::{CurrentTeam, Membership, Teams};
+use teams::{CurrentTeam, Membership, Store, Teams};
 
 fn user(parts: &Parts) -> Option<i64> {
     parts.headers.get("x-user")?.to_str().ok()?.parse().ok()
@@ -21,7 +21,7 @@ async fn current(c: CurrentTeam<TeamRole>) -> String {
 }
 
 async fn switch(m: Membership<TeamRole>, mut c: CurrentTeam<TeamRole>) -> Redirect {
-    c.set(&m);
+    c.set(&m).await.unwrap();
     Redirect::to("/current")
 }
 
@@ -66,11 +66,41 @@ async fn current_team_falls_back_and_follows_switches() {
     assert_eq!(ada.send(Method::GET, "/current").await, "Second");
     ada.send(Method::POST, &format!("/teams/{}/switch", other.id)).await;
     assert_eq!(ada.send(Method::GET, "/current").await, "Second", "cannot switch to a team you cannot open");
+    assert_eq!(t.store().current_team_id(1).await.unwrap(), Some(second.id), "stored for the user");
+    let mut ada_elsewhere = Client { routes: routes.clone(), user: 1, cookie: None };
+    assert_eq!(ada_elsewhere.send(Method::GET, "/current").await, "Second", "a new session lands on the stored team");
 
     // Losing access drops the choice.
     t.add_member(&second, 2, TeamRole::Owner).await.unwrap();
     t.remove_member(&second, 1).await.unwrap();
     assert_eq!(ada.send(Method::GET, "/current").await, "First");
+    assert_eq!(t.store().current_team_id(1).await.unwrap(), Some(first.id), "the fallback is stored");
     t.delete_team(&first).await.unwrap();
     assert_eq!(ada.send(Method::GET, "/current").await, "none");
+}
+
+#[tokio::test]
+async fn required_teams_give_everyone_a_personal_team() {
+    let t = Teams::new(common::Store::new()).require_team(|user| format!("Personal {user}"));
+    let mut r = Router::new();
+    r.get("/current", current);
+    r.layer(session::layer(session::MemoryStore::new(), Codec::new(Keys::parse(&Keys::generate()).unwrap())))
+        .layer(teams::layer(t.clone(), user));
+    let mut cy = Client { routes: r.build(()).unwrap(), user: 3, cookie: None };
+
+    assert_eq!(cy.send(Method::GET, "/current").await, "Personal 3", "created on first use");
+    assert_eq!(cy.send(Method::GET, "/current").await, "Personal 3", "once");
+    let teams = t.teams_of(3).await.unwrap();
+    assert_eq!(teams.len(), 1);
+    assert_eq!(t.store().current_team_id(3).await.unwrap(), Some(teams[0].team.id));
+
+    let personal = teams[0].team.clone();
+    t.add_member(&personal, 4, TeamRole::Owner).await.unwrap();
+    assert!(matches!(t.remove_member(&personal, 3).await, Err(teams::Error::LastTeam)), "cannot leave the last team");
+    assert!(matches!(t.keeps_a_team(3, |team| team.id == personal.id).await, Err(teams::Error::LastTeam)), "nor delete it");
+    let other = t.create_team(3, None, "Other").await.unwrap();
+    t.remove_member(&personal, 3).await.unwrap();
+    t.keeps_a_team(3, |team| team.id == personal.id).await.unwrap();
+    assert_eq!(cy.send(Method::GET, "/current").await, "Other", "falls back to the team left");
+    assert_eq!(t.store().current_team_id(3).await.unwrap(), Some(other.id));
 }

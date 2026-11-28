@@ -18,8 +18,11 @@ use crate::state::Primary;
 pub type Store = teams::MysqlStore<TeamRole, OrgRole>;
 pub type Teams = teams::Teams<Store>;
 
+/// Every user has a team: one with none gets a personal team on their next
+/// request that resolves `CurrentTeam`, and cannot leave their last one.
+/// Drop `.require_team(...)` to make teams optional.
 pub fn teams(db: &Db<Primary>) -> Teams {
-    teams::Teams::new(teams::MysqlStore::new(db.pool().clone()))
+    teams::Teams::new(teams::MysqlStore::new(db.pool().clone())).require_team(|_user| "Personal".to_owned())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
@@ -126,6 +129,7 @@ pub fn failed(e: teams::Error) -> Response<Body> {
         teams::Error::NotMember | teams::Error::NotFound => StatusCode::NOT_FOUND.into_response(),
         teams::Error::InvitationExpired => invalid("token", "This invitation has expired. Ask for a new one."),
         teams::Error::EmailMismatch => invalid("token", "This invitation was sent to another email address."),
+        teams::Error::LastTeam => invalid("team", "You need at least one team. Create or join another one first."),
         teams::Error::AlreadyInvited => invalid("email", "They already have a pending invitation. Send it again from the list."),
         teams::Error::Store(e) => {
             tracing::error!("teams: {e}");

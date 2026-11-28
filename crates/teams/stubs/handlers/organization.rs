@@ -75,7 +75,9 @@ pub async fn update(cx: Cx<App>, can: OrgCan<RenameOrg, OrgRole>, input: Valid<J
 
 /// Deletes its teams too.
 pub async fn destroy(cx: Cx<App>, can: OrgCan<DeleteOrg, OrgRole>) -> Result<StatusCode> {
-    access::teams(&cx.db).delete_org(&can.org).await.map_err(access::failed)?;
+    let t = access::teams(&cx.db);
+    t.keeps_a_team(can.user_id, |team| team.org_id == Some(can.org.id)).await.map_err(access::failed)?;
+    t.delete_org(&can.org).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

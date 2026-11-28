@@ -21,6 +21,11 @@ async fn check<S: Store<Role = TeamRole, OrgRole = OrgRole>>(t: Teams<S>) {
     assert_eq!(s.orgs_of(2).await.unwrap().len(), 1);
 
     let core = t.create_team(1, Some(acme.id), "Core").await.unwrap();
+    assert_eq!(s.current_team_id(1).await.unwrap(), None);
+    s.set_current_team_id(1, Some(core.id)).await.unwrap();
+    assert_eq!(s.current_team_id(1).await.unwrap(), Some(core.id));
+    s.set_current_team_id(1, None).await.unwrap();
+    assert_eq!(s.current_team_id(1).await.unwrap(), None);
     assert_eq!(core.org_id, Some(acme.id));
     assert!(matches!(t.create_team(2, Some(acme.id), "Core").await, Err(Error::NameTaken)));
     let web = t.create_team(2, Some(acme.id), "Web").await.unwrap();
@@ -76,12 +81,18 @@ async fn sqlite() {
     // One connection, so the in-memory database is shared.
     let pool = sqlx::sqlite::SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
     sqlx::raw_sql(include_str!("../stubs/migrations/sqlite/create_teams.up.sql")).execute(&pool).await.unwrap();
+    sqlx::raw_sql(USERS).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../stubs/migrations/add_current_team.up.sql")).execute(&pool).await.unwrap();
     check(Teams::new(teams::SqliteStore::new(pool))).await;
 }
 
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 const DROP: &str = "drop table if exists team_invitations; drop table if exists team_members; drop table if exists teams; \
-                    drop table if exists organization_members; drop table if exists organizations";
+                    drop table if exists organization_members; drop table if exists organizations; drop table if exists users";
+
+/// The app's users table, which the teams migrations alter.
+#[cfg(any(feature = "sqlite", feature = "postgres", feature = "mysql"))]
+const USERS: &str = "create table users (id bigint primary key); insert into users (id) values (1)";
 
 #[cfg(feature = "postgres")]
 #[tokio::test(flavor = "multi_thread")]
@@ -90,6 +101,8 @@ async fn postgres() {
     let pool = sqlx::PgPool::connect(&url).await.unwrap();
     sqlx::raw_sql(DROP).execute(&pool).await.unwrap();
     sqlx::raw_sql(include_str!("../stubs/migrations/create_teams.up.sql")).execute(&pool).await.unwrap();
+    sqlx::raw_sql(USERS).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../stubs/migrations/add_current_team.up.sql")).execute(&pool).await.unwrap();
     check(Teams::new(teams::PostgresStore::new(pool))).await;
 }
 
@@ -100,5 +113,7 @@ async fn mysql() {
     let pool = sqlx::MySqlPool::connect(&url).await.unwrap();
     sqlx::raw_sql(DROP).execute(&pool).await.unwrap();
     sqlx::raw_sql(include_str!("../stubs/migrations/mysql/create_teams.up.sql")).execute(&pool).await.unwrap();
+    sqlx::raw_sql(USERS).execute(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../stubs/migrations/add_current_team.up.sql")).execute(&pool).await.unwrap();
     check(Teams::new(teams::MysqlStore::new(pool))).await;
 }

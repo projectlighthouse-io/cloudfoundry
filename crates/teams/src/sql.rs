@@ -376,6 +376,25 @@ macro_rules! sql_store {
                 sqlx::query(&statement("delete from team_invitations where id = ?", $numbered)).bind(id).execute(&self.pool).await.map_err(failed)?;
                 Ok(())
             }
+
+            async fn current_team_id(&self, user: i64) -> Result<Option<i64>, Error> {
+                let row: Option<(Option<i64>,)> = sqlx::query_as(&statement("select current_team_id from users where id = ?", $numbered))
+                    .bind(user)
+                    .fetch_optional(&self.pool)
+                    .await
+                    .map_err(failed)?;
+                Ok(row.and_then(|(id,)| id))
+            }
+
+            async fn set_current_team_id(&self, user: i64, team: Option<i64>) -> Result<(), Error> {
+                sqlx::query(&statement("update users set current_team_id = ? where id = ?", $numbered))
+                    .bind(team)
+                    .bind(user)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(failed)?;
+                Ok(())
+            }
         }
     };
 }

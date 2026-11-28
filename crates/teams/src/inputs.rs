@@ -68,7 +68,11 @@ trait Lookup<R, O>: Send + Sync {
     fn team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     fn org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
-    fn first_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    #[cfg_attr(not(feature = "session"), allow(dead_code))]
+    fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>>;
+    #[cfg_attr(not(feature = "session"), allow(dead_code))]
+    fn save_team(&self, user: i64, team: Option<i64>) -> BoxFuture<'_, Result<(), Error>>;
 }
 
 impl<S: Store> Lookup<S::Role, S::OrgRole> for Teams<S> {
@@ -78,8 +82,14 @@ impl<S: Store> Lookup<S::Role, S::OrgRole> for Teams<S> {
     fn org(&self, org: i64, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<S::OrgRole>>, Error>> {
         Box::pin(self.org_access(org, user))
     }
-    fn first_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
-        Box::pin(async move { Ok(self.teams_of(user).await?.into_iter().next()) })
+    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
+        Box::pin(Teams::fallback_team(self, user))
+    }
+    fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>> {
+        Box::pin(self.store().current_team_id(user))
+    }
+    fn save_team(&self, user: i64, team: Option<i64>) -> BoxFuture<'_, Result<(), Error>> {
+        Box::pin(self.store().set_current_team_id(user, team))
     }
 }
 
@@ -115,7 +125,11 @@ pub(crate) trait TeamOnly<R>: Send + Sync {
     fn user<'a>(&'a self, parts: &'a mut Parts) -> BoxFuture<'a, Result<i64, Response<Body>>>;
     fn lookup_team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
-    fn first_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    #[cfg_attr(not(feature = "session"), allow(dead_code))]
+    fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>>;
+    #[cfg_attr(not(feature = "session"), allow(dead_code))]
+    fn save_team(&self, user: i64, team: Option<i64>) -> BoxFuture<'_, Result<(), Error>>;
 }
 
 pub(crate) trait OrgOnly<O>: Send + Sync {
@@ -130,8 +144,14 @@ impl<R: Role, O: OrgRole> TeamOnly<R> for Gate<R, O> {
     fn lookup_team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
         self.lookup.team(team, user)
     }
-    fn first_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
-        self.lookup.first_team(user)
+    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
+        self.lookup.fallback_team(user)
+    }
+    fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>> {
+        self.lookup.saved_team(user)
+    }
+    fn save_team(&self, user: i64, team: Option<i64>) -> BoxFuture<'_, Result<(), Error>> {
+        self.lookup.save_team(user, team)
     }
 }
 

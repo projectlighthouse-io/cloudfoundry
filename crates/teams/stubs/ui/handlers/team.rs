@@ -180,13 +180,15 @@ pub async fn update(cx: Cx<App>, can: Can<RenameTeam, TeamRole>, input: Valid<Js
 }
 
 pub async fn destroy(cx: Cx<App>, can: Can<DeleteTeam, TeamRole>) -> Result<Redirect> {
-    access::teams(&cx.db).delete_team(&can.team).await.map_err(access::failed)?;
+    let t = access::teams(&cx.db);
+    t.keeps_a_team(can.user_id, |team| team.id == can.team.id).await.map_err(access::failed)?;
+    t.delete_team(&can.team).await.map_err(access::failed)?;
     Ok(Redirect::to("/teams"))
 }
 
-pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> Redirect {
-    current.set(&m);
-    back(&m.team)
+pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> Result<Redirect> {
+    current.set(&m).await.map_err(access::failed)?;
+    Ok(back(&m.team))
 }
 
 pub async fn leave(cx: Cx<App>, m: Membership<TeamRole>) -> Result<Redirect> {

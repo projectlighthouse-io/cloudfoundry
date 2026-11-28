@@ -19,6 +19,7 @@ struct State<R, O> {
     org_members: BTreeMap<(i64, i64), O>,
     team_members: BTreeMap<(i64, i64), R>,
     invitations: BTreeMap<i64, (Invitation<R, O>, String)>,
+    current: BTreeMap<i64, i64>,
 }
 
 impl<R, O> Default for MemoryStore<R, O> {
@@ -36,6 +37,7 @@ impl<R, O> MemoryStore<R, O> {
             org_members: BTreeMap::new(),
             team_members: BTreeMap::new(),
             invitations: BTreeMap::new(),
+            current: BTreeMap::new(),
         };
         Self { state: Mutex::new(state), roles: PhantomData }
     }
@@ -207,6 +209,19 @@ impl<R: Role, O: OrgRole> Store for MemoryStore<R, O> {
 
     async fn delete_invitation(&self, id: i64) -> Result<(), Error> {
         self.lock().invitations.remove(&id);
+        Ok(())
+    }
+
+    async fn current_team_id(&self, user: i64) -> Result<Option<i64>, Error> {
+        Ok(self.lock().current.get(&user).copied())
+    }
+
+    async fn set_current_team_id(&self, user: i64, team: Option<i64>) -> Result<(), Error> {
+        let mut s = self.lock();
+        match team {
+            Some(team) => s.current.insert(user, team),
+            None => s.current.remove(&user),
+        };
         Ok(())
     }
 }

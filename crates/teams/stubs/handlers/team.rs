@@ -80,14 +80,16 @@ pub async fn update(cx: Cx<App>, can: Can<RenameTeam, TeamRole>, input: Valid<Js
 }
 
 pub async fn destroy(cx: Cx<App>, can: Can<DeleteTeam, TeamRole>) -> Result<StatusCode> {
-    access::teams(&cx.db).delete_team(&can.team).await.map_err(access::failed)?;
+    let t = access::teams(&cx.db);
+    t.keeps_a_team(can.user_id, |team| team.id == can.team.id).await.map_err(access::failed)?;
+    t.delete_team(&can.team).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 /// Make this the user's current team (where they land after login).
-pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> StatusCode {
-    current.set(&m);
-    StatusCode::NO_CONTENT
+pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> Result<StatusCode> {
+    current.set(&m).await.map_err(access::failed)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// Leave the team. The last owner cannot.

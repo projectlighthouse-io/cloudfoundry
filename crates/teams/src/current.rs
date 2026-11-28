@@ -1,4 +1,5 @@
-//! The team a user last switched to, kept in the session.
+//! The team a user last switched to: `users.current_team_id`, cached in the
+//! session.
 
 use std::{future::Future, ops::Deref, sync::Arc};
 
@@ -8,17 +9,24 @@ use route::{
 };
 use session::Session;
 
-use crate::{Membership, Role, inputs::team_gate};
+use crate::{Error, Membership, Role, inputs::{TeamGate, team_gate}};
 
 const KEY: &str = "current_team";
 
-/// The user's current team: the one they last switched to, if they can
-/// still open it, else their first team by id. `None` without any team.
+/// The user's current team. Resolved in order: the session's cached id, the
+/// stored one (`users.current_team_id`, so a new login or another app
+/// instance lands on the same team), then the first team by id, or a new
+/// personal team when [`Teams::require_team`](crate::Teams::require_team)
+/// is on. Whatever it falls back to is stored. Each id is checked: a team the
+/// user can no longer open is skipped. `None` only without any team.
+///
 /// Routes still name their team in the path; this only picks where to land
 /// and what a switcher shows. Needs the session layer before `teams::layer`.
 pub struct CurrentTeam<R> {
     team: Option<Membership<R>>,
     session: Session,
+    gate: TeamGate<R>,
+    user: i64,
 }
 
 impl<R> Deref for CurrentTeam<R> {
@@ -29,19 +37,14 @@ impl<R> Deref for CurrentTeam<R> {
 }
 
 impl<R: Clone> CurrentTeam<R> {
-    /// Switch to a team. It takes a [`Membership`], so only a team the user
-    /// can open: switch in a handler whose input loaded it.
-    pub fn set(&mut self, membership: &Membership<R>) {
-        if let Err(e) = self.session.insert(KEY, &membership.team.id) {
-            tracing::error!("teams: storing the current team failed: {e}");
-        }
+    /// Switch to a team, for this session and the stored default. It takes a
+    /// [`Membership`], so only a team the user can open: switch in a handler
+    /// whose input loaded it.
+    pub async fn set(&mut self, membership: &Membership<R>) -> Result<(), Error> {
+        self.gate.0.save_team(self.user, Some(membership.team.id)).await?;
+        cache(&self.session, membership.team.id);
         self.team = Some(membership.clone());
-    }
-
-    /// Forget the choice; the next request falls back to the first team.
-    pub fn clear(&mut self) {
-        self.session.remove(KEY);
-        self.team = None;
+        Ok(())
     }
 
     pub fn into_inner(self) -> Option<Membership<R>> {
@@ -49,7 +52,13 @@ impl<R: Clone> CurrentTeam<R> {
     }
 }
 
-fn failed(e: crate::Error) -> Response<Body> {
+fn cache(session: &Session, team: i64) {
+    if let Err(e) = session.insert(KEY, &team) {
+        tracing::error!("teams: caching the current team failed: {e}");
+    }
+}
+
+fn failed(e: Error) -> Response<Body> {
     tracing::error!("teams: {e}");
     StatusCode::INTERNAL_SERVER_ERROR.into_response()
 }
@@ -62,14 +71,30 @@ impl<S: Send + Sync, R: Role> FromRequestParts<S> for CurrentTeam<R> {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         })?;
         let user = gate.0.user(parts).await?;
+        let found = |team: Option<Membership<R>>, session: Session, gate: TeamGate<R>| Ok(Self { team, session, gate, user });
+
         if let Some(id) = session.get::<i64>(KEY).ok().flatten() {
             if let Some(team) = gate.0.lookup_team(id, user).await.map_err(failed)? {
-                return Ok(Self { team: Some(team), session });
+                return found(Some(team), session, gate);
             }
             session.remove(KEY);
         }
-        let team = gate.0.first_team(user).await.map_err(failed)?;
-        Ok(Self { team, session })
+        let saved = gate.0.saved_team(user).await.map_err(failed)?;
+        if let Some(id) = saved {
+            if let Some(team) = gate.0.lookup_team(id, user).await.map_err(failed)? {
+                cache(&session, id);
+                return found(Some(team), session, gate);
+            }
+        }
+        let team = gate.0.fallback_team(user).await.map_err(failed)?;
+        let id = team.as_ref().map(|m| m.team.id);
+        if id != saved {
+            gate.0.save_team(user, id).await.map_err(failed)?;
+        }
+        if let Some(id) = id {
+            cache(&session, id);
+        }
+        found(team, session, gate)
     }
 }
 
