@@ -18,13 +18,13 @@ art new myapp --git https://github.com/projectlighthouse-io/toolkit
 | [`action`](crates/action) | One trait for a unit of application logic |
 | [`validate`](crates/validate) | `Validate`, `Valid<T>`, field errors |
 | [`securecookie`](crates/securecookie) | Sign and encrypt cookie values |
-| [`session`](crates/session) | Sessions: layer, flash, Postgres / MySQL / SQLite stores |
+| [`session`](crates/session) | Sessions: layer, flash, Postgres / MySQL / SQLite / Redis stores |
 | [`csrf`](crates/csrf) | CSRF tokens (Inertia's `X-XSRF-TOKEN`) |
 | [`password`](crates/password) | Argon2id hashing, rehash checks |
 | [`throttle`](crates/throttle) | Rate limits per key: fixed/sliding window, token bucket; middleware, logins, outgoing calls |
 | [`auth`](crates/auth) | Current user, guards, `attempt` with throttling, API tokens with expiry, password reset; publishable handlers |
 | [`socialite`](crates/socialite) | OAuth login: GitHub, GitLab, Google, Reddit, X, Auth0, any OpenID Connect provider (one feature each) |
-| [`teams`](crates/teams) | Organizations and teams with typed roles and permissions, invitations |
+| [`teams`](crates/teams) | Organizations and teams with typed roles and permissions, invitations, a stored current team, optional required teams |
 | [`inertia`](crates/inertia) | The Inertia.js v3 protocol |
 | [`vite`](crates/vite) | Asset tags from Vite |
 | [`queue`](crates/queue) | Jobs: push, claim, retry, failed jobs |

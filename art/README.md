@@ -13,7 +13,7 @@ art dev
 
 | Command | Does |
 | --- | --- |
-| `new <name> [--driver sqlite\|mysql]` | App tree, `main.rs` wiring, `.env` with a fresh `APP_KEY`, Vue + Inertia frontend (with SSR entry) |
+| `new <name> [--driver sqlite\|mysql]` | App tree, `main.rs` wiring, `.env` with a fresh `APP_KEY`, styled Vue + Inertia frontend (with SSR entry) |
 | `dev` | Runs the app (restart on change), Vite, and TypeScript prop types export |
 | `build` | Type export, Vite production build, `cargo build --release` |
 | `migrate`, `migrate:rollback`, `make:migration` | Through `sqlx-cli` |
@@ -22,11 +22,16 @@ art dev
 | `make:middleware`, `make:job`, `make:event [--listener]`, `make:command` | Stubs |
 | `publish <package> [--driver sqlite\|mysql] [--with-ui]` | Copy a package's stubs into the app; `--with-ui` adds its Inertia pages (`--list`, `--force`) |
 | `key:generate` | A fresh `APP_KEY` |
-
-`art new` also writes `AGENTS.md` (read by Codex, Cursor and others) and a `CLAUDE.md` that imports it:
-the app's layout, commands and rules, with links to the docs as Markdown. `art publish <crate>`
-appends that crate's notes to it.
 | `ssr` | Run the Inertia SSR server from `art build`; set `INERTIA_SSR_URL=http://127.0.0.1:13714` |
 | anything else | `cargo run -- …`: `route:list`, `queue:work`, `event:list`, `config:show`, … |
 
 Generators never rewrite existing code; they print the lines to add.
+
+`art new` also writes `AGENTS.md` (read by Codex, Cursor and others) and a `CLAUDE.md` that imports it:
+the app's layout, commands and rules, with links to the docs as Markdown. `art publish <crate>`
+appends that crate's notes to it.
+
+The frontend comes styled: `resources/css/app.css` (tokens, buttons, fields, page head, label strips,
+hairline rows), `layouts/AppLayout.vue` (signed-in pages; `wide` for landing pages), `AuthLayout.vue`,
+and `components/Field.vue` and `UserMenu.vue` (add a link per published page). The pages that
+`art publish <crate> --with-ui` copies use them.

@@ -62,7 +62,7 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
     let env_example = format!("APP_NAME={name}\nAPP_KEY=\nDATABASE_URL={url}\n");
     let env = format!("APP_NAME={name}\nAPP_KEY={}\nDATABASE_URL={url}\n", crate::generate_key()?);
 
-    let files: &[(&str, &str)] = &[
+    let mut files: Vec<(&str, &str)> = vec![
         ("Cargo.toml", &cargo_toml),
         ("AGENTS.md", &agents),
         // Claude Code reads CLAUDE.md; it imports AGENTS.md so both stay one file.
@@ -86,21 +86,13 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
         ("src/responses/home.rs", HOME_PROPS),
         ("package.json", PACKAGE_JSON),
         ("vite.config.ts", VITE_CONFIG),
-        ("resources/js/app.ts", APP_TS),
-        ("resources/js/ssr.ts", SSR_TS),
-        ("resources/js/pages/home.vue", HOME_VUE),
-        ("resources/css/app.css", include_str!("../templates/app.css")),
-        ("resources/js/layouts/AppLayout.vue", include_str!("../templates/AppLayout.vue")),
-        ("resources/js/layouts/AuthLayout.vue", include_str!("../templates/AuthLayout.vue")),
-        ("resources/js/components/Field.vue", include_str!("../templates/Field.vue")),
-        ("resources/js/components/UserMenu.vue", include_str!("../templates/UserMenu.vue")),
-        ("resources/js/types/Home.ts", HOME_TS),
         (".cargo/config.toml", CARGO_CONFIG),
         ("resources/views/app.html", APP_HTML),
         ("public/.gitkeep", ""),
         ("src/commands/mod.rs", COMMANDS),
     ];
-    for (file, contents) in files {
+    files.extend_from_slice(FRONTEND);
+    for (file, contents) in &files {
         let file = dir.join(file);
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
@@ -114,6 +106,20 @@ pub fn run(name: &str, path: Option<PathBuf>, git: Option<String>, driver: &str)
     );
     Ok(())
 }
+
+/// The frontend `art new` writes: entry points, the home page, the stylesheet,
+/// and the layouts and components that published pages import.
+const FRONTEND: &[(&str, &str)] = &[
+    ("resources/js/app.ts", APP_TS),
+    ("resources/js/ssr.ts", SSR_TS),
+    ("resources/js/pages/home.vue", HOME_VUE),
+    ("resources/js/types/Home.ts", HOME_TS),
+    ("resources/css/app.css", include_str!("../templates/app.css")),
+    ("resources/js/layouts/AppLayout.vue", include_str!("../templates/AppLayout.vue")),
+    ("resources/js/layouts/AuthLayout.vue", include_str!("../templates/AuthLayout.vue")),
+    ("resources/js/components/Field.vue", include_str!("../templates/Field.vue")),
+    ("resources/js/components/UserMenu.vue", include_str!("../templates/UserMenu.vue")),
+];
 
 /// Instructions for coding agents (Codex, Cursor, Claude Code via CLAUDE.md).
 /// `art publish` appends each module's notes.
@@ -653,3 +659,43 @@ export type Home = { app_name: string, };
 const CARGO_CONFIG: &str = r#"[env]
 TS_RS_EXPORT_DIR = { value = "resources/js/types", relative = true }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Component, Path, PathBuf};
+
+    /// `a/b/../c` as `a/c`.
+    fn normalize(path: &Path) -> String {
+        let mut out = PathBuf::new();
+        for c in path.components() {
+            match c {
+                Component::ParentDir => {
+                    out.pop();
+                }
+                Component::CurDir => {}
+                c => out.push(c),
+            }
+        }
+        out.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn frontend_imports_resolve_to_written_files() {
+        let written: Vec<&str> = super::FRONTEND.iter().map(|(path, _)| *path).collect();
+        for (path, source) in super::FRONTEND {
+            for line in source.lines().filter(|l| l.trim_start().starts_with("import ")) {
+                let Some(spec) = line.split(['\'', '"']).nth(1).filter(|s| s.starts_with('.')) else { continue };
+                let target = normalize(&Path::new(path).parent().unwrap_or(Path::new("")).join(spec));
+                let found = [target.clone(), format!("{target}.ts")].iter().any(|t| written.contains(&t.as_str()));
+                assert!(found, "{path} imports {spec}, which art new does not write");
+            }
+        }
+    }
+
+    #[test]
+    fn signed_in_pages_get_the_app_name_and_the_stylesheet() {
+        let layout = super::FRONTEND.iter().find(|(p, _)| p.ends_with("AppLayout.vue")).map(|(_, s)| *s).unwrap_or_default();
+        assert_eq!(layout.matches("{name}").count(), 2, "brand and footer");
+        assert!(super::APP_TS.starts_with("import '../css/app.css'"));
+    }
+}

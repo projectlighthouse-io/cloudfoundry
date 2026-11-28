@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "art"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -138,7 +138,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "session"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "clap",
@@ -2027,7 +2027,7 @@ dependencies = [
 
 [[package]]
 name = "socialite"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.3.4",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "teams"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "auth",
  "base64 0.22.1",
