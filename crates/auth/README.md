@@ -63,3 +63,12 @@ The published `users` table has a `uuid` column (`db::Uuid<User>`, UUIDv7, app-g
 `api_tokens`. The published `User` serializes as `{ "uuid", "name", "email" }`: `id`, the password hash and the
 remember token are `#[serde(skip)]`. Name users and tokens by `uuid` in URLs (`Users::by_uuid`,
 `Users::delete_token_by_uuid`); the internal `id` is for queries. Apps need `db`'s `uuid` feature (on in `art new`).
+
+Sudo mode: `auth.confirm_password(&users, password)` stamps the session; a handler taking
+`auth::PasswordConfirmed<User>` runs only within `Config::password_timeout` (3 hours) of that. Otherwise page
+visits go to `Config::confirm_route` (`password.confirm`) and return afterwards (`auth.intended(default)`: the
+`GET` path, or a form's same-origin `Referer`); JSON clients get `423 Locked`. Published as
+`handlers/password_confirm.rs` and `pages/auth/confirm-password.vue`.
+
+`auth.validate(&users, login, password)` is `attempt` without the login (throttle, verify, rehash): for a second
+factor (`factor2`) that logs in only after its own check.

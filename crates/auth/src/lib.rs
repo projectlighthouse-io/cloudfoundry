@@ -16,6 +16,11 @@
 //! - [`Resets`] + [`reset_link_token`] / [`reset_password`]: "forgot password"
 //!   links. Sending the mail is the app's.
 //! - [`Auth::change_password`]: a logged-in user changes their password.
+//! - Sudo mode: [`Auth::confirm_password`] stamps the session;
+//!   [`PasswordConfirmed<U>`] only exists for a user who confirmed within
+//!   `Config::password_timeout` (else a redirect to the confirm page, or `423`).
+//! - [`Auth::validate`]: check a password without logging in, for a second
+//!   factor (`factor2`) that finishes the login later.
 //!
 //! Only the user id is stored in the session. The user is loaded at most once
 //! per request, and only if something asks.
@@ -47,6 +52,10 @@ use tower::{Layer, Service};
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 const SESSION_KEY: &str = "_auth_id";
+/// Unix seconds of the last [`Auth::confirm_password`].
+const CONFIRMED_KEY: &str = "_auth_password_confirmed_at";
+/// Where to go after confirming the password.
+const INTENDED_KEY: &str = "_auth_intended";
 
 /// How the app loads its users. The only integration point.
 pub trait Provider: Send + Sync + 'static {
@@ -400,12 +409,24 @@ pub struct Config {
     /// How long a remember cookie lasts. At most 400 days (the browser cap).
     #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
     pub remember_for: Duration,
+    /// Route name page visits go to when [`PasswordConfirmed`] needs a fresh confirmation.
+    pub confirm_route: String,
+    /// How long a password confirmation (sudo mode) lasts.
+    #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
+    pub password_timeout: Duration,
 }
 
-/// `login`, `Secure`, cookie `remember`, 400 days.
+/// `login`, `Secure`, cookie `remember`, 400 days; `password.confirm`, 3 hours (Laravel's defaults).
 impl Default for Config {
     fn default() -> Self {
-        Self { login_route: "login".into(), secure: true, remember_cookie: "remember".into(), remember_for: MAX_COOKIE_AGE }
+        Self {
+            login_route: "login".into(),
+            secure: true,
+            remember_cookie: "remember".into(),
+            remember_for: MAX_COOKIE_AGE,
+            confirm_route: "password.confirm".into(),
+            password_timeout: Duration::from_secs(3 * 60 * 60),
+        }
     }
 }
 
@@ -434,6 +455,12 @@ impl Config {
         }
         if self.remember_for.as_secs() == 0 || self.remember_for > MAX_COOKIE_AGE {
             return err("remember_for must be between 1 second and 400 days".into());
+        }
+        if self.confirm_route.is_empty() {
+            return err("confirm_route is empty".into());
+        }
+        if self.password_timeout.is_zero() {
+            return err("password_timeout must be above zero".into());
         }
         Ok(())
     }
@@ -807,6 +834,22 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
     where
         P: Credentials<User = U>,
     {
+        let user = self.validate(users, login, password).await?;
+        if remember {
+            self.login_remember(&user);
+        } else {
+            self.login(&user);
+        }
+        Ok(user)
+    }
+
+    /// [`attempt`](Self::attempt) without the login: throttle, lookup, verify,
+    /// rehash. Returns the user so a second factor can run first; call
+    /// [`login`](Self::login) once it passes.
+    pub async fn validate<P>(&self, users: &P, login: &str, password: &str) -> Result<U, AttemptError>
+    where
+        P: Credentials<User = U>,
+    {
         let key = format!("login:{}|{}", login.trim().to_lowercase(), self.cx.ip.map(|ip| ip.to_string()).unwrap_or_default());
         let throttle = self.cx.throttle.as_deref();
         if let Some(t) = throttle {
@@ -849,12 +892,6 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
                 Err(e) => tracing::warn!("rehashing the password failed: {e}"),
             }
         }
-
-        if remember {
-            self.login_remember(&user);
-        } else {
-            self.login(&user);
-        }
         Ok(user)
     }
 }
@@ -882,6 +919,90 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         }
         self.login(&user);
         Ok(())
+    }
+}
+
+impl<U: Clone + Send + Sync + 'static> Auth<U> {
+    /// Sudo mode: check the logged-in user's password and stamp the session,
+    /// so [`PasswordConfirmed`] passes for `Config::password_timeout`.
+    pub async fn confirm_password<P>(&self, users: &P, password: &str) -> Result<(), ChangeError>
+    where
+        P: Credentials<User = U>,
+    {
+        let user = self.user.clone().ok_or(ChangeError::NotLoggedIn)?;
+        let hash = users.password_hash(&user).ok_or(ChangeError::NoPassword)?;
+        let pw = password.to_owned();
+        let ok = tokio::task::spawn_blocking(move || password::verify(&pw, &hash).is_ok()).await.map_err(|e| ChangeError::Other(e.into()))?;
+        if !ok {
+            return Err(ChangeError::WrongPassword);
+        }
+        self.session.insert(CONFIRMED_KEY, &unix_now()).map_err(|e| ChangeError::Other(e.into()))
+    }
+
+    /// The page [`PasswordConfirmed`] sent the user away from, or `default`.
+    /// Taken: a second call returns `default`.
+    pub fn intended(&self, default: &str) -> String {
+        let url = self.session.get::<String>(INTENDED_KEY).ok().flatten();
+        self.session.remove(INTENDED_KEY);
+        url.unwrap_or_else(|| default.to_owned())
+    }
+}
+
+/// The logged-in user, who confirmed their password within
+/// `Config::password_timeout` ([`Auth::confirm_password`]). Otherwise page
+/// visits are redirected to `Config::confirm_route` (a `GET`, or the
+/// same-origin `Referer` of a form submission, is remembered for
+/// [`Auth::intended`]) and JSON clients get `423 Locked`. Anonymous
+/// requests get the login redirect or `401`.
+pub struct PasswordConfirmed<U>(pub U);
+
+impl<U> Deref for PasswordConfirmed<U> {
+    type Target = U;
+    fn deref(&self) -> &U {
+        &self.0
+    }
+}
+
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for PasswordConfirmed<U> {
+    async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
+        let (user, cx, session) = current::<U>(&parts.extensions).await?;
+        let Some(user) = user else { return Err(unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.login_route)) };
+        let Some(session) = session else {
+            tracing::error!("`PasswordConfirmed` needs a session; add `session::layer` before `auth::layer`");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        };
+        let at = session.get::<i64>(CONFIRMED_KEY).ok().flatten();
+        if at.is_some_and(|at| unix_now().saturating_sub(at) < cx.cfg.password_timeout.as_secs() as i64) {
+            return Ok(PasswordConfirmed(user));
+        }
+        if let Some(path) = intended_path(parts) {
+            if let Err(e) = session.insert(INTENDED_KEY, &path) {
+                tracing::error!("remembering the intended page failed: {e}");
+            }
+        }
+        Err(match unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.confirm_route) {
+            res if res.status() == StatusCode::UNAUTHORIZED => StatusCode::LOCKED.into_response(),
+            res => res,
+        })
+    }
+}
+
+/// Where to return after confirming: a `GET`'s own path, or for a form
+/// submission the page it came from (the `Referer`, when same-origin).
+fn intended_path(parts: &Parts) -> Option<String> {
+    if parts.method == route::http::Method::GET {
+        return Some(parts.uri.path_and_query().map_or("/", |p| p.as_str()).to_owned());
+    }
+    let referer = parts.headers.get(header::REFERER)?.to_str().ok()?;
+    let host = parts.headers.get(header::HOST)?.to_str().ok()?;
+    let rest = referer.split_once("://")?.1;
+    let (origin, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    (origin == host && path.starts_with('/') && !path.starts_with("//")).then(|| path.to_owned())
+}
+
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for PasswordConfirmed<U> {
+    fn from_request(req: Request<Body>, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send {
+        route::from_parts(req, state)
     }
 }
 

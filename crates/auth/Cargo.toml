@@ -47,6 +47,8 @@ toml = "0.9"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
 "stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/handlers/password_confirm.rs" = "src/handlers/password_confirm.rs"
+"stubs/requests/password_confirm.rs" = "src/requests/password_confirm.rs"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
@@ -62,6 +64,8 @@ toml = "0.9"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
 "stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/handlers/password_confirm.rs" = "src/handlers/password_confirm.rs"
+"stubs/requests/password_confirm.rs" = "src/requests/password_confirm.rs"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/sqlite/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
@@ -77,6 +81,8 @@ toml = "0.9"
 "stubs/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/requests/password_reset.rs" = "src/requests/password_reset.rs"
 "stubs/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/handlers/password_confirm.rs" = "src/handlers/password_confirm.rs"
+"stubs/requests/password_confirm.rs" = "src/requests/password_confirm.rs"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/mysql/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/mysql/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
@@ -88,6 +94,9 @@ toml = "0.9"
 "stubs/ui/handlers/register.rs" = "src/handlers/register.rs"
 "stubs/ui/handlers/password_reset.rs" = "src/handlers/password_reset.rs"
 "stubs/ui/handlers/password.rs" = "src/handlers/password.rs"
+"stubs/ui/handlers/password_confirm.rs" = "src/handlers/password_confirm.rs"
+"stubs/pages/confirm-password.vue" = "resources/js/pages/auth/confirm-password.vue"
+"stubs/types/ConfirmPasswordPage.ts" = "resources/js/types/ConfirmPasswordPage.ts"
 "stubs/pages/login.vue" = "resources/js/pages/auth/login.vue"
 "stubs/pages/register.vue" = "resources/js/pages/auth/register.vue"
 "stubs/pages/forgot-password.vue" = "resources/js/pages/auth/forgot-password.vue"
@@ -99,6 +108,7 @@ agents = """
 - Users: `src/users.rs` implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
 - `User` and `ApiToken` are named by `uuid` (`db::Uuid<T>`); `id` is `#[serde(skip)]`. Both derive `ts_rs::TS` and export to `resources/js/types/` (`db` needs feature `ts`, on in `art new`).
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
+- Sudo mode: take `auth::PasswordConfirmed<User>` (not `Authed<User>`) in handlers for dangerous actions (disable 2FA, delete account); the user re-enters their password at `password.confirm`, valid `auth::Config::password_timeout` (3h). `auth.validate(...)` checks a password without logging in (for a second factor).
 - Guard routes with `auth::require::<User>()` in a route group; take `Authed<User>` in handlers that need a user, `Auth<User>` when it is optional.
 - `auth::layer(...)` goes after the session and CSRF layers in `src/main.rs`. Login route and remember cookie settings: `[auth]` in config (`auth::Config`, `.config(cfg.auth)?`).
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/auth.md"""
@@ -110,8 +120,8 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
-  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
+  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
   src/routes.rs         r.post("/login", handlers::login::login).name("login");
                         r.post("/logout", handlers::login::logout).name("logout");
                         r.post("/register", handlers::register::store).name("register");
@@ -120,8 +130,11 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         r.group("/settings", |r| {
                             r.layer(auth::require::<users::User>());
                             r.post("/password", handlers::password::update).name("password.change");
+                            r.post("/confirm-password", handlers::password_confirm::store).name("password.confirm");
                         });
 
+Sudo mode: a handler taking `auth::PasswordConfirmed<User>` answers `423` until the user POSTs their
+password to /settings/confirm-password (valid 3 hours, `auth::Config::password_timeout`).
 Then run `art migrate`. Reset links are logged until you send them by mail
 (`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
 config/default.toml (`env(APP_URL, ...)`): point it at your frontend.
@@ -135,8 +148,8 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                         .layer(auth::layer(users::Users { db: app.db.clone() })   // after the session and csrf layers
                             .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
-  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_reset; pub mod register;
+  src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");
                         r.post("/login", handlers::login::login).name("login.store");
                         r.post("/logout", handlers::login::logout).name("logout");
@@ -150,8 +163,12 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                             r.layer(auth::require::<users::User>());
                             r.get("/password", handlers::password::edit).name("password.edit");
                             r.post("/password", handlers::password::update).name("password.change");
+                            r.get("/confirm-password", handlers::password_confirm::show).name("password.confirm");
+                            r.post("/confirm-password", handlers::password_confirm::store).name("password.confirm.store");
                         });
 
+Sudo mode: a page whose handler takes `auth::PasswordConfirmed<User>` sends the user to
+/settings/confirm-password first (valid 3 hours, `auth::Config::password_timeout`), then back.
 Then run `art migrate`. Reset links are logged until you send them by mail
 (`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
 config/default.toml (`env(APP_URL, ...)`).
