@@ -12,7 +12,8 @@ const props = defineProps<{
   can: { rename: boolean; delete: boolean; manage_members: boolean }
   members: { id: number; email: string; name: string | null; role: string }[]
   teams: { id: number; name: string }[]
-  invitations: { id: number; email: string; role: string }[]
+  invitations: { id: number; email: string; role: string; expires_at: number }[]
+  invitation_link: { id: number; url: string } | null
 }>()
 
 const base = `/organizations/${props.organization.id}`
@@ -53,7 +54,7 @@ const team = useForm({ name: '', organization_id: props.organization.id })
       </ul>
     </section>
 
-    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :can-manage="can.manage_members" :can-invite="can.manage_members" remove-note="They also leave every team in this organization." />
+    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.manage_members" remove-note="They also leave every team in this organization." />
 
     <TeamSettings
       :base="base" kind="organization" :name="organization.name"

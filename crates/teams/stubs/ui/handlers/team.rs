@@ -8,11 +8,12 @@ use route::{
     http::Response,
 };
 use serde::{Deserialize, Serialize};
+use session::Session;
 use teams::{Can, CurrentTeam, Membership, Org, Store, Target, Team};
 use validate::Valid;
 
 use crate::{
-    access::{self, DeleteTeam, InviteMembers, ManageMembers, RenameTeam, TeamRole},
+    access::{self, DeleteTeam, InviteMembers, ManageMembers, OrgRole, RenameTeam, TeamRole},
     requests::team::{Invite, NewTeam, RoleChange, TeamName},
     state::App,
     users::{User, Users},
@@ -52,6 +53,25 @@ pub struct InvitationItem {
     id: i64,
     email: String,
     role: TeamRole,
+    /// Unix seconds.
+    expires_at: i64,
+}
+
+/// The link of the invitation just sent, flashed for the next page so it
+/// can be copied: the token is not stored, so it cannot be shown later.
+#[derive(Serialize, Deserialize)]
+pub struct SentLink {
+    id: i64,
+    url: String,
+}
+
+const SENT_LINK: &str = "teams.invitation_link";
+
+fn flash_link(session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
+    let link = SentLink { id: new.invitation.id, url: access::invitation_link(&new.token) };
+    if let Err(e) = session.flash(SENT_LINK, &link) {
+        tracing::error!("flashing the invitation link: {e}");
+    }
 }
 
 #[derive(Serialize)]
@@ -70,9 +90,12 @@ pub struct TeamPage {
     user_id: i64,
     role: TeamRole,
     via_org: bool,
+    /// Whether this is the user's current team.
+    current: bool,
     can: Abilities,
     members: Vec<MemberItem>,
     invitations: Vec<InvitationItem>,
+    invitation_link: Option<SentLink>,
 }
 
 #[derive(Deserialize)]
@@ -107,7 +130,7 @@ pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewTeam>>)
     Ok(back(&team))
 }
 
-pub async fn show(cx: Cx<App>, user: Authed<User>, m: Membership<TeamRole>) -> Result<inertia::Page<TeamPage>> {
+pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, current: CurrentTeam<TeamRole>, m: Membership<TeamRole>) -> Result<inertia::Page<TeamPage>> {
     let t = access::teams(&cx.db);
     let users = Users { db: cx.db.clone() };
     let mut members = Vec::new();
@@ -124,7 +147,7 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, m: Membership<TeamRole>) -> R
         .map_err(access::failed)?
         .into_iter()
         .filter_map(|i| match i.target {
-            Target::Team { role, .. } => Some(InvitationItem { id: i.id, email: i.email, role }),
+            Target::Team { role, .. } => Some(InvitationItem { id: i.id, email: i.email, role, expires_at: i.expires_at }),
             Target::Org { .. } => None,
         })
         .collect();
@@ -135,7 +158,19 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, m: Membership<TeamRole>) -> R
     let can = Abilities { rename: m.can::<RenameTeam>(), delete: m.can::<DeleteTeam>(), manage_members: m.can::<ManageMembers>(), invite: m.can::<InviteMembers>() };
     Ok(inertia::render(
         "teams/show",
-        TeamPage { email: user.email.clone(), user_id: m.user_id, role: m.role, via_org: m.via_org, can, team: m.team, organization, members, invitations },
+        TeamPage {
+            email: user.email.clone(),
+            user_id: m.user_id,
+            role: m.role,
+            via_org: m.via_org,
+            current: current.as_ref().is_some_and(|c| c.team.id == m.team.id),
+            can,
+            team: m.team,
+            organization,
+            members,
+            invitations,
+            invitation_link: session.get(SENT_LINK).ok().flatten(),
+        },
     ))
 }
 
@@ -183,11 +218,21 @@ pub async fn remove_member(cx: Cx<App>, can: Can<ManageMembers, TeamRole>, Path(
     Ok(back(&can.team))
 }
 
-pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, input: Valid<Json<Invite>>) -> Result<Redirect> {
+pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Session, input: Valid<Json<Invite>>) -> Result<Redirect> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Team { team: can.team.id, role: input.role };
+    access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
     access::send_invitation(&new.invitation.email, &new.token);
+    flash_link(&session, &new);
+    Ok(back(&can.team))
+}
+
+/// A new link and a fresh lifetime; the old link stops working.
+pub async fn resend(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Session, Path(path): Path<InvitationPath>) -> Result<Redirect> {
+    let new = access::teams(&cx.db).resend_team_invitation(&can.team, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
+    access::send_invitation(&new.invitation.email, &new.token);
+    flash_link(&session, &new);
     Ok(back(&can.team))
 }
 

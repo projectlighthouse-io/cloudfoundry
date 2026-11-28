@@ -11,9 +11,11 @@ const props = defineProps<{
   user_id: number
   role: string
   via_org: boolean
+  current: boolean
   can: { rename: boolean; delete: boolean; manage_members: boolean; invite: boolean }
   members: { id: number; email: string; name: string | null; role: string }[]
-  invitations: { id: number; email: string; role: string }[]
+  invitations: { id: number; email: string; role: string; expires_at: number }[]
+  invitation_link: { id: number; url: string } | null
 }>()
 
 const base = `/teams/${props.team.id}`
@@ -32,11 +34,12 @@ const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')
         </div>
       </div>
       <div class="phead-act">
-        <button class="btn btn-line" type="button" @click="router.post(`${base}/switch`, {}, { preserveScroll: true })">Make current</button>
+        <span v-if="current" class="state state-on">current team</span>
+        <button v-else class="btn btn-line" type="button" @click="router.post(`${base}/switch`, {}, { preserveScroll: true })">Make current</button>
       </div>
     </header>
 
-    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :can-manage="can.manage_members" :can-invite="can.invite" remove-note="They lose access to this team." />
+    <TeamMembers :base="base" :user-id="user_id" :members="members" :invitations="invitations" :sent-link="invitation_link" :can-manage="can.manage_members" :can-invite="can.invite" remove-note="They lose access to this team." />
 
     <TeamSettings
       :base="base" kind="team" :name="team.name"

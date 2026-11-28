@@ -128,3 +128,29 @@ async fn org_team_invitations_need_org_membership() {
     t.revoke_org_invitation(&org, pending).await.unwrap();
     assert!(t.store().org_invitations(org.id).await.unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn one_pending_invitation_per_email_and_resend_rotates_it() {
+    let t = Teams::new(common::Store::new());
+    let team = t.create_team(ADA, None, "Core").await.unwrap();
+    let day = Duration::from_secs(86400);
+    let target = Target::Team { team: team.id, role: TeamRole::Member };
+
+    let first = t.invite(target, "bob@example.com", ADA, day).await.unwrap();
+    assert!(matches!(t.invite(target, "BOB@example.com", ADA, day).await, Err(Error::AlreadyInvited)), "ignores case");
+    t.invite(Target::Team { team: t.create_team(ADA, None, "Ops").await.unwrap().id, role: TeamRole::Member }, "bob@example.com", ADA, day).await.unwrap();
+
+    let again = t.resend_team_invitation(&team, first.invitation.id, day).await.unwrap();
+    assert_ne!(again.token, first.token);
+    assert_eq!(again.invitation.email, "bob@example.com");
+    assert!(matches!(t.accept(&first.token, BOB, "bob@example.com").await, Err(Error::NotFound)), "the old link stops working");
+    assert_eq!(t.store().team_invitations(team.id).await.unwrap().len(), 1);
+    t.accept(&again.token, BOB, "bob@example.com").await.unwrap();
+
+    t.invite(target, "cy@example.com", ADA, Duration::ZERO).await.unwrap();
+    t.invite(target, "cy@example.com", ADA, day).await.unwrap();
+    assert_eq!(t.store().team_invitations(team.id).await.unwrap().len(), 1, "an expired one is replaced");
+
+    let other = t.create_team(BOB, None, "Other").await.unwrap();
+    assert!(matches!(t.resend_team_invitation(&other, again.invitation.id, day).await, Err(Error::NotFound)));
+}

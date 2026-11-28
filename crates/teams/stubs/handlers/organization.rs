@@ -112,7 +112,15 @@ pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, 
 pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, input: Valid<Json<OrgInvite>>) -> Result<impl IntoResponse> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Org { org: can.org.id, role: input.role };
+    access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
+    access::send_invitation(&new.invitation.email, &new.token);
+    Ok((StatusCode::CREATED, Json(new.invitation)))
+}
+
+/// A new link and a fresh lifetime; the old link stops working.
+pub async fn resend(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, Path(path): Path<InvitationPath>) -> Result<impl IntoResponse> {
+    let new = access::teams(&cx.db).resend_org_invitation(&can.org, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
     access::send_invitation(&new.invitation.email, &new.token);
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }

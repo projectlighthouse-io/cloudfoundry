@@ -101,6 +101,7 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.delete("/teams/{team}/members/{user}", handlers::team::remove_member).name("teams.members.destroy");
                             r.post("/teams/{team}/invitations", handlers::team::invite).name("teams.invitations.store");
                             r.delete("/teams/{team}/invitations/{invitation}", handlers::team::revoke).name("teams.invitations.destroy");
+                            r.post("/teams/{team}/invitations/{invitation}/resend", handlers::team::resend).name("teams.invitations.resend");
                             r.get("/organizations", handlers::organization::index).name("organizations");
                             r.post("/organizations", handlers::organization::store).name("organizations.store");
                             r.get("/organizations/{org}", handlers::organization::show).name("organizations.show");
@@ -111,6 +112,7 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.delete("/organizations/{org}/members/{user}", handlers::organization::remove_member).name("organizations.members.destroy");
                             r.post("/organizations/{org}/invitations", handlers::organization::invite).name("organizations.invitations.store");
                             r.delete("/organizations/{org}/invitations/{invitation}", handlers::organization::revoke).name("organizations.invitations.destroy");
+                            r.post("/organizations/{org}/invitations/{invitation}/resend", handlers::organization::resend).name("organizations.invitations.resend");
                             r.post("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
                         });
 
@@ -137,6 +139,7 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.delete("/teams/{team}/members/{user}", handlers::team::remove_member).name("teams.members.destroy");
                             r.post("/teams/{team}/invitations", handlers::team::invite).name("teams.invitations.store");
                             r.delete("/teams/{team}/invitations/{invitation}", handlers::team::revoke).name("teams.invitations.destroy");
+                            r.post("/teams/{team}/invitations/{invitation}/resend", handlers::team::resend).name("teams.invitations.resend");
                             r.get("/organizations", handlers::organization::index).name("organizations");
                             r.post("/organizations", handlers::organization::store).name("organizations.store");
                             r.get("/organizations/{org}", handlers::organization::show).name("organizations.show");
@@ -147,6 +150,7 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.delete("/organizations/{org}/members/{user}", handlers::organization::remove_member).name("organizations.members.destroy");
                             r.post("/organizations/{org}/invitations", handlers::organization::invite).name("organizations.invitations.store");
                             r.delete("/organizations/{org}/invitations/{invitation}", handlers::organization::revoke).name("organizations.invitations.destroy");
+                            r.post("/organizations/{org}/invitations/{invitation}/resend", handlers::organization::resend).name("organizations.invitations.resend");
                             r.get("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
                         });
 

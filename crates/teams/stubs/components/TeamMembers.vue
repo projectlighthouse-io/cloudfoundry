@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { router, useForm, usePage } from '@inertiajs/vue3'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps<{
   base: string
   userId: number
   members: { id: number; email: string; name: string | null; role: string }[]
-  invitations: { id: number; email: string; role: string }[]
+  invitations: { id: number; email: string; role: string; expires_at: number }[]
+  /** The link of the invitation just sent; tokens are not stored, so only a fresh one can be shown. */
+  sentLink: { id: number; url: string } | null
   canManage: boolean
   canInvite: boolean
   removeNote: string
@@ -22,6 +24,17 @@ const initial = (s: string) => s.charAt(0).toUpperCase()
 const changeRole = (user: number, role: string) => router.put(`${props.base}/members/${user}`, { role }, opts)
 const remove = (m: { id: number; email: string }) => confirm(`Remove ${m.email}? ${props.removeNote}`) && router.delete(`${props.base}/members/${m.id}`, opts)
 const revoke = (id: number) => router.delete(`${props.base}/invitations/${id}`, opts)
+const resend = (id: number) => router.post(`${props.base}/invitations/${id}/resend`, {}, opts)
+const copied = ref(false)
+const copy = async (url: string) => {
+  await navigator.clipboard.writeText(url)
+  copied.value = true
+  setTimeout(() => (copied.value = false), 1200)
+}
+const expires = (at: number) => {
+  const days = Math.ceil((at * 1000 - Date.now()) / 86_400_000)
+  return days <= 0 ? 'expired' : days === 1 ? 'link expires in 1 day' : `link expires in ${days} days`
+}
 const send = () => invite.post(`${props.base}/invitations`, { ...opts, onSuccess: () => invite.reset('email') })
 const count = computed(() => {
   const n = props.members.length
@@ -60,13 +73,21 @@ const count = computed(() => {
           <span class="face face-pending" aria-hidden="true">{{ initial(i.email) }}</span>
           <span class="who-text">
             <span class="name">{{ i.email }}</span>
-            <span class="meta">Invited as {{ i.role }} · link expires in 7 days</span>
+            <span class="meta">Invited as {{ i.role }} · {{ expires(i.expires_at) }}</span>
           </span>
         </span>
         <span class="trail">
           <span class="state state-wait">pending</span>
-          <button v-if="canInvite" class="btn btn-line btn-sm" type="button" @click="revoke(i.id)">Withdraw</button>
+          <template v-if="canInvite">
+            <button class="btn btn-line btn-sm" type="button" @click="resend(i.id)">Send again</button>
+            <button class="btn btn-line btn-sm" type="button" @click="revoke(i.id)">Withdraw</button>
+          </template>
         </span>
+        <div v-if="sentLink?.id === i.id" class="copy-link">
+          <input class="input mono" :value="sentLink.url" readonly aria-label="Invitation link" @focus="($event.target as HTMLInputElement).select()" />
+          <button class="btn btn-ink btn-sm" type="button" @click="copy(sentLink.url)">{{ copied ? 'Copied' : 'Copy link' }}</button>
+          <p class="hint">Anyone logged in as {{ i.email }} can join with this link. Sending again replaces it.</p>
+        </div>
       </li>
       <li v-if="canInvite" id="invite" class="form-row">
         <form class="add" @submit.prevent="send">

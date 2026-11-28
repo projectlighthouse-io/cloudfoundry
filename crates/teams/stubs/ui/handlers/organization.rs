@@ -8,11 +8,12 @@ use route::{
     http::Response,
 };
 use serde::{Deserialize, Serialize};
+use session::Session;
 use teams::{Org, OrgCan, OrgMembership, Store, Target, Team};
 use validate::Valid;
 
 use crate::{
-    access::{self, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg},
+    access::{self, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
     requests::team::{NewOrganization, OrgInvite, OrgRoleChange},
     state::App,
     users::{User, Users},
@@ -48,6 +49,25 @@ pub struct InvitationItem {
     id: i64,
     email: String,
     role: OrgRole,
+    /// Unix seconds.
+    expires_at: i64,
+}
+
+/// The link of the invitation just sent, flashed for the next page so it
+/// can be copied: the token is not stored, so it cannot be shown later.
+#[derive(Serialize, Deserialize)]
+pub struct SentLink {
+    id: i64,
+    url: String,
+}
+
+const SENT_LINK: &str = "teams.invitation_link";
+
+fn flash_link(session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
+    let link = SentLink { id: new.invitation.id, url: access::invitation_link(&new.token) };
+    if let Err(e) = session.flash(SENT_LINK, &link) {
+        tracing::error!("flashing the invitation link: {e}");
+    }
 }
 
 #[derive(Serialize)]
@@ -67,6 +87,7 @@ pub struct OrgPage {
     members: Vec<MemberItem>,
     teams: Vec<Team>,
     invitations: Vec<InvitationItem>,
+    invitation_link: Option<SentLink>,
 }
 
 #[derive(Deserialize)]
@@ -94,7 +115,7 @@ pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewOrganiz
     Ok(back(&org))
 }
 
-pub async fn show(cx: Cx<App>, user: Authed<User>, m: OrgMembership<OrgRole>) -> Result<inertia::Page<OrgPage>> {
+pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, m: OrgMembership<OrgRole>) -> Result<inertia::Page<OrgPage>> {
     let t = access::teams(&cx.db);
     let users = Users { db: cx.db.clone() };
     let mut members = Vec::new();
@@ -112,14 +133,24 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, m: OrgMembership<OrgRole>) ->
         .map_err(access::failed)?
         .into_iter()
         .filter_map(|i| match i.target {
-            Target::Org { role, .. } => Some(InvitationItem { id: i.id, email: i.email, role }),
+            Target::Org { role, .. } => Some(InvitationItem { id: i.id, email: i.email, role, expires_at: i.expires_at }),
             Target::Team { .. } => None,
         })
         .collect();
     let can = Abilities { rename: m.can::<RenameOrg>(), delete: m.can::<DeleteOrg>(), manage_members: m.can::<ManageOrgMembers>() };
     Ok(inertia::render(
         "organizations/show",
-        OrgPage { email: user.email.clone(), user_id: m.user_id, role: m.role, can, organization: m.org, members, teams, invitations },
+        OrgPage {
+            email: user.email.clone(),
+            user_id: m.user_id,
+            role: m.role,
+            can,
+            organization: m.org,
+            members,
+            teams,
+            invitations,
+            invitation_link: session.get(SENT_LINK).ok().flatten(),
+        },
     ))
 }
 
@@ -161,11 +192,21 @@ pub async fn remove_member(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, 
     Ok(back(&can.org))
 }
 
-pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, input: Valid<Json<OrgInvite>>) -> Result<Redirect> {
+pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, session: Session, input: Valid<Json<OrgInvite>>) -> Result<Redirect> {
     access::may_grant(can.role, input.role)?;
     let target = Target::Org { org: can.org.id, role: input.role };
+    access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
     access::send_invitation(&new.invitation.email, &new.token);
+    flash_link(&session, &new);
+    Ok(back(&can.org))
+}
+
+/// A new link and a fresh lifetime; the old link stops working.
+pub async fn resend(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, session: Session, Path(path): Path<InvitationPath>) -> Result<Redirect> {
+    let new = access::teams(&cx.db).resend_org_invitation(&can.org, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
+    access::send_invitation(&new.invitation.email, &new.token);
+    flash_link(&session, &new);
     Ok(back(&can.org))
 }
 

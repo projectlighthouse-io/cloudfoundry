@@ -160,6 +160,9 @@ pub enum Error {
     InvitationExpired,
     /// The invitation was sent to another email address.
     EmailMismatch,
+    /// This email already has an invitation that has not expired.
+    /// Send that one again instead.
+    AlreadyInvited,
     /// The store failed.
     Store(Box<dyn std::error::Error + Send + Sync>),
 }
@@ -174,6 +177,7 @@ impl fmt::Display for Error {
             Self::NotFound => f.write_str("not found"),
             Self::InvitationExpired => f.write_str("the invitation has expired"),
             Self::EmailMismatch => f.write_str("the invitation was sent to another email address"),
+            Self::AlreadyInvited => f.write_str("this email already has a pending invitation"),
             Self::Store(e) => write!(f, "teams store: {e}"),
         }
     }
@@ -393,13 +397,53 @@ impl<S: Store> Teams<S> {
     }
 
     /// Invite `email` to a team or organization for `valid_for`. Returns the
-    /// token for the accept link; it is not stored.
+    /// token for the accept link; it is not stored. [`Error::AlreadyInvited`]
+    /// if `email` (ignoring case) has an unexpired invitation to the same
+    /// team or organization; an expired one is deleted. Whether `email`
+    /// already belongs to a member is the app's to check: the store keeps
+    /// user ids, not emails.
     pub async fn invite(&self, target: Target<R<S>, O<S>>, email: &str, invited_by: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
-        match target {
-            Target::Team { team, .. } => self.0.team(team).await?.map(|_| ()),
-            Target::Org { org, .. } => self.0.org(org).await?.map(|_| ()),
+        let pending = match target {
+            Target::Team { team, .. } => {
+                self.0.team(team).await?.ok_or(Error::NotFound)?;
+                self.0.team_invitations(team).await?
+            }
+            Target::Org { org, .. } => {
+                self.0.org(org).await?.ok_or(Error::NotFound)?;
+                self.0.org_invitations(org).await?
+            }
+        };
+        let now = now();
+        for old in pending.iter().filter(|i| i.email.eq_ignore_ascii_case(email)) {
+            if old.expires_at > now {
+                return Err(Error::AlreadyInvited);
+            }
+            self.0.delete_invitation(old.id).await?;
         }
-        .ok_or(Error::NotFound)?;
+        self.issue(target, email, invited_by, valid_for).await
+    }
+
+    /// Send one of `team`'s invitations again: a new token and a new
+    /// `valid_for`; the old link stops working. [`Error::NotFound`] if it is
+    /// not one of them.
+    pub async fn resend_team_invitation(&self, team: &Team, invitation: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
+        let old = self.0.team_invitations(team.id).await?.into_iter().find(|i| i.id == invitation).ok_or(Error::NotFound)?;
+        self.reissue(old, valid_for).await
+    }
+
+    /// Send one of `org`'s invitations again; see [`Teams::resend_team_invitation`].
+    pub async fn resend_org_invitation(&self, org: &Org, invitation: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
+        let old = self.0.org_invitations(org.id).await?.into_iter().find(|i| i.id == invitation).ok_or(Error::NotFound)?;
+        self.reissue(old, valid_for).await
+    }
+
+    // ponytail: delete + create instead of a store method to rotate the token; the id changes.
+    async fn reissue(&self, old: InvitationOf<S>, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
+        self.0.delete_invitation(old.id).await?;
+        self.issue(old.target, &old.email, old.invited_by, valid_for).await
+    }
+
+    async fn issue(&self, target: Target<R<S>, O<S>>, email: &str, invited_by: i64, valid_for: Duration) -> Result<NewInvitation<R<S>, O<S>>, Error> {
         let token = random_token();
         let expires_at = now().saturating_add(valid_for.as_secs() as i64);
         let invitation = self.0.create_invitation(email, target, invited_by, expires_at, &hash_token(&token)).await?;
