@@ -285,3 +285,15 @@ async fn wrong_codes_are_throttled() {
     }
     assert_eq!(b.post(&format!("/challenge/backup/{}/false", backup[0])).await, "throttled", "even a right code waits");
 }
+
+#[test]
+fn pass_finishes_the_pending_login_once() {
+    let tf = two_factor(factor2::Config::default());
+    let session = Session::new();
+    assert!(matches!(tf.pass(&session), Err(ChallengeError::NoPending)));
+    tf.begin(&session, 1, true).unwrap();
+    let passed = tf.pass(&session).unwrap();
+    assert_eq!((passed.user_id, passed.remember, passed.backup_codes_left), (1, true, None));
+    assert_eq!(tf.pending(&session), None);
+    assert!(matches!(tf.pass(&session), Err(ChallengeError::NoPending)));
+}

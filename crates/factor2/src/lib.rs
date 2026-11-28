@@ -499,6 +499,14 @@ impl<S: Store> TwoFactor<S> {
         Ok(Passed { user_id: user, remember: pending.remember, backup_codes_left })
     }
 
+    /// Finish the pending login with a second factor checked elsewhere (a
+    /// passkey, verified for [`TwoFactor::pending`]'s user). Then call `auth.login`.
+    pub fn pass(&self, session: &Session) -> Result<Passed, ChallengeError> {
+        let pending = self.pending_login(session).ok_or(ChallengeError::NoPending)?;
+        session.remove(PENDING_KEY);
+        Ok(Passed { user_id: pending.user_id, remember: pending.remember, backup_codes_left: None })
+    }
+
     /// Whether this browser's trusted cookie is valid for `user`: signed, not
     /// expired, and its device not revoked. Marks the device used.
     pub async fn trusted(&self, user: i64, device: &Device) -> Result<bool, Error> {

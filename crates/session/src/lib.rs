@@ -164,6 +164,13 @@ impl Session {
         Session(Arc::new(Mutex::new(State::default())))
     }
 
+    /// An empty session outside any request or store, for tests of code that
+    /// takes a `&Session`. Nothing it holds is saved.
+    #[allow(clippy::new_without_default, reason = "a request's session comes from the layer; this one is spelled out")]
+    pub fn new() -> Self {
+        Self::empty()
+    }
+
     /// What to write once the handler is done.
     fn finish(&self, now: i64, lifetime: i64) -> Plan {
         let mut s = self.state();

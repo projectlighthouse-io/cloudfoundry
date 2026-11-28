@@ -1,0 +1,113 @@
+[package]
+name = "passkeys"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+description = "Passkeys (WebAuthn): passwordless sign-in and a second factor"
+
+[dependencies]
+db = { path = "../db", features = ["uuid"] }
+serde = { version = "1", features = ["derive"] }
+session = { path = "../session" }
+tracing = "0.1"
+uuid = { version = "1.10", features = ["v4", "serde"] }
+webauthn-rs-proto = "0.6.2"
+# State serialisation: ceremony state lives in the session, which is stored server side.
+webauthn-rs = { version = "0.6.2", features = ["danger-allow-state-serialisation", "conditional-ui"] }
+
+event = { path = "../event", optional = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "uuid", "json"], optional = true }
+throttle = { path = "../throttle", optional = true }
+ts-rs = { version = "12", optional = true }
+
+[features]
+# SQL stores. Publish the table with `art publish passkeys [--driver sqlite|mysql]`.
+postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+# `Passkeys::events(events, cx)`: emit `events::*` on the `event` bus.
+event = ["dep:event"]
+# `Passkeys::throttle(limiter)`: limit failed sign-ins per IP and second factors per user and IP.
+throttle = ["dep:throttle"]
+# `ts_rs::TS` for `Passkey`, for page prop types.
+ts = ["dep:ts-rs", "db/ts"]
+
+[dev-dependencies]
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+webauthn-authenticator-rs = { version = "0.6.2", features = ["softpasskey"] }
+
+[package.metadata.art.publish]
+"stubs/passkey.rs" = "src/passkey.rs"
+"stubs/handlers/passkey.rs" = "src/handlers/passkey.rs"
+"stubs/requests/passkey.rs" = "src/requests/passkey.rs"
+"stubs/migrations/create_passkeys.up.sql" = "migrations/{timestamp}_create_passkeys.up.sql"
+"stubs/migrations/create_passkeys.down.sql" = "migrations/{timestamp}_create_passkeys.down.sql"
+
+[package.metadata.art.publish-sqlite]
+"stubs/sqlite/passkey.rs" = "src/passkey.rs"
+"stubs/handlers/passkey.rs" = "src/handlers/passkey.rs"
+"stubs/requests/passkey.rs" = "src/requests/passkey.rs"
+"stubs/migrations/sqlite/create_passkeys.up.sql" = "migrations/{timestamp}_create_passkeys.up.sql"
+"stubs/migrations/create_passkeys.down.sql" = "migrations/{timestamp}_create_passkeys.down.sql"
+
+[package.metadata.art.publish-mysql]
+"stubs/mysql/passkey.rs" = "src/passkey.rs"
+"stubs/handlers/passkey.rs" = "src/handlers/passkey.rs"
+"stubs/requests/passkey.rs" = "src/requests/passkey.rs"
+"stubs/migrations/mysql/create_passkeys.up.sql" = "migrations/{timestamp}_create_passkeys.up.sql"
+"stubs/migrations/create_passkeys.down.sql" = "migrations/{timestamp}_create_passkeys.down.sql"
+
+# `art publish passkeys --with-ui`: Inertia handlers, the settings page and the browser helper.
+[package.metadata.art.with-ui]
+"stubs/ui/handlers/passkey.rs" = "src/handlers/passkey.rs"
+"stubs/pages/settings/passkeys.vue" = "resources/js/pages/settings/passkeys.vue"
+"stubs/js/passkeys.ts" = "resources/js/passkeys.ts"
+"stubs/types/PasskeysPage.ts" = "resources/js/types/PasskeysPage.ts"
+"stubs/types/Passkey.ts" = "resources/js/types/Passkey.ts"
+
+[package.metadata.art]
+agents = """
+- Passkeys (`passkeys`, webauthn-rs): `src/passkey.rs` builds the app's one `Passkeys` (`passkeys(&app)`, rp id = APP_URL's host); handlers in `src/handlers/passkey.rs`. Each ceremony is two requests: `start_*` returns options for the browser and keeps the state in the session (5 minutes), `finish_*` checks the browser's answer. `resources/js/passkeys.ts` does the browser half.
+- Passwordless: `start_login` / `finish_login` (discoverable credentials), then `auth.login`; a passkey verifies the user itself, so it skips the two-factor challenge.
+- Second factor: on the factor2 challenge, `start_authentication(user)` / `finish_authentication`, then `TwoFactor::pass` and `auth.login`.
+- Removing a passkey takes `auth::PasswordConfirmed<User>`. With feature `event`, `Passkeys` emits `passkeys::events::*` itself. Before deleting a user, call `passkeys(&app).delete_all(id)` (no cascades)."""
+notes = """
+Needs `art publish auth` first (its `users` table and confirm-password stubs); the second-factor
+handlers need `art publish factor2` too (delete `second_factor_*` if you skip it). Add the dependency
+`passkeys = { <same source as auth>, features = ["<driver>", "event", "throttle"] }` (`<driver>` is sqlite,
+postgres or mysql), then:
+
+  src/main.rs           mod passkey;
+  src/handlers/mod.rs   pub mod passkey;
+  src/requests/mod.rs   pub mod passkey;
+  src/routes.rs         r.post("/passkeys/login/options", handlers::passkey::login_options).name("passkeys.login.options");
+                        r.post("/passkeys/login", handlers::passkey::login).name("passkeys.login");
+                        r.post("/two-factor-challenge/passkey/options", handlers::passkey::second_factor_options).name("two-factor.passkey.options");
+                        r.post("/two-factor-challenge/passkey", handlers::passkey::second_factor).name("two-factor.passkey");
+                        r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/passkeys", handlers::passkey::index).name("passkeys.index");
+                            r.post("/passkeys/options", handlers::passkey::register_options).name("passkeys.options");
+                            r.post("/passkeys", handlers::passkey::store).name("passkeys.store");
+                            r.patch("/passkeys/{passkey}", handlers::passkey::rename).name("passkeys.update");
+                            r.delete("/passkeys/{passkey}", handlers::passkey::destroy).name("passkeys.destroy");
+                        });
+
+Then run `art migrate` (after auth's migration: the table references users). Ceremony state is kept in
+the session: use a server-side session store. Before deleting a user, call `passkeys(&app).delete_all(id)`."""
+with-ui-notes = """
+Needs `art publish auth --with-ui` first; the second-factor handlers need `art publish factor2 --with-ui`
+(delete `second_factor_*` if you skip it). Add the dependency
+`passkeys = { <same source as auth>, features = ["<driver>", "event", "throttle", "ts"] }`, then the same
+`mod` lines and routes as without `--with-ui`, and `art migrate`.
+
+On the login page:            import { signIn } from '../../passkeys'
+                              <button type="button" @click="signIn">Sign in with a passkey</button>
+On the two-factor challenge:  import { secondFactor } from '../../passkeys'
+                              <button type="button" @click="secondFactor(form.trust)">Use a passkey</button>
+Link /settings/passkeys from your settings navigation. Browsers need `PublicKeyCredential.parseCreationOptionsFromJSON`
+(Chrome 129, Safari 18, Firefox 119)."""
+
+[lints]
+workspace = true

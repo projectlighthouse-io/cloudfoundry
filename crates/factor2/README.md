@@ -37,6 +37,7 @@ auth.login(&user);
 // Challenge
 let passed = tf.challenge(&session, ip, Code::Totp(&code)).await?;   // or Code::Backup(..)
 auth.login(&users.find(passed.user_id).await?.unwrap());             // rotates the session id
+// Or a second factor checked elsewhere (a `passkeys` passkey): tf.pass(&session)? then auth.login
 ```
 
 ## Rules
