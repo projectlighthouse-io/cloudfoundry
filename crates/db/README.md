@@ -38,4 +38,6 @@ max_lifetime = "never"
 | --- | --- |
 | `postgres`, `mysql`, `sqlite` | The `sqlx` driver |
 | `configured` | `db::PoolConfig` deserializes (durations as `"30s"`, `"never"` for no limit) |
+| `uuid` | `db::Uuid<T>`: a typed UUIDv7 for URLs and JSON (`uuid` / `blob` / `binary(16)` columns), so internal ids stay internal |
+| `ts` | `ts_rs::TS` for `Uuid<T>`: `Uuid<"Team">` in generated TypeScript, a branded string declared in `Uuid.ts` (`art new` ships it in `resources/js/types/`) |
 | `singleton` | `Db::<H>::set_singleton` / `singleton()`: one process-wide slot per handle; both return `Result<_, SingletonError>` |

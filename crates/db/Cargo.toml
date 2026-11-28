@@ -8,6 +8,9 @@ description = "Typed pool handles and explicit transactions over sqlx"
 [dependencies]
 configured = { path = "../configured", default-features = false, optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+serde = { version = "1", optional = true }
+uuid = { version = "1.10", features = ["v7"], optional = true }
+ts-rs = { version = "12", optional = true }
 
 
 [features]
@@ -16,13 +19,20 @@ mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
 # `Db::<H>::set_singleton` and `Db::<H>::singleton`.
 singleton = []
+# `Uuid<T>`: a UUIDv7 for URLs and JSON, so internal ids stay internal.
+uuid = ["dep:uuid", "dep:serde", "sqlx/uuid"]
+# `ts_rs::TS` for `Uuid<T>`: `Uuid<"Team">` in generated TypeScript, declared in `Uuid.ts`.
+ts = ["uuid", "dep:ts-rs"]
 # `PoolConfig` deserializes through `configured` (durations as "2h", "14d").
 configured = ["dep:configured"]
 
 [dev-dependencies]
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio = { version = "1", features = ["macros", "rt"] }
 toml = "0.9"
+ts-rs = "12"
 
 [lints]
 workspace = true

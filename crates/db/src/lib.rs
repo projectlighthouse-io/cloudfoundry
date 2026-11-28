@@ -13,6 +13,11 @@
 
 pub use sqlx;
 
+#[cfg(feature = "uuid")]
+mod id;
+#[cfg(feature = "uuid")]
+pub use id::Uuid;
+
 use std::{fmt, marker::PhantomData, sync::OnceLock, time::Duration};
 
 use sqlx::{Database, Pool, Transaction, pool::PoolOptions};
