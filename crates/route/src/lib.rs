@@ -10,6 +10,7 @@
 //! let routes = r.build(state)?;
 //! ```
 
+mod bind;
 mod extract;
 mod response;
 mod url;
@@ -25,6 +26,7 @@ mod server;
 
 #[cfg(feature = "action")]
 pub use action_handler::{ActionHandler, action};
+pub use bind::{Bind, Bound};
 pub use extract::{BodyLimit, Cx, DEFAULT_BODY_LIMIT, Form, FromRequest, FromRequestParts, Json, Path, Query, from_parts};
 pub use http;
 pub use response::{Html, IntoResponse, Redirect};

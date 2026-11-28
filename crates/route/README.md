@@ -35,6 +35,10 @@ Body inputs (`Form`, `Json`, `Bytes`) read at most 2 MiB (`DEFAULT_BODY_LIMIT`);
 over it is a 413. Raise it per router or group with `r.body_limit(n)`, or per route
 with `r.post("/upload", h).body_limit(n)`.
 
+Route model binding: implement `Bind<App>` for a model (the path parameter's name, a key type
+that parses from the segment, and a `resolve` lookup), then take `Bound<Machine>` in a handler
+on `/machines/{machine}`. A key that does not parse or resolves to nothing is a 404.
+
 ## Features
 
 | Feature | Adds |
