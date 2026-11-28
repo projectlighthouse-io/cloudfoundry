@@ -193,6 +193,12 @@ where
                 None => Session::empty(),
             };
 
+            let user_agent = req.headers().get(header::USER_AGENT).and_then(|v| v.to_str().ok()).map(|v| v.chars().take(crate::MAX_USER_AGENT).collect());
+            #[cfg(feature = "route")]
+            let ip = req.extensions().get::<route::ClientAddr>().map(|a| a.0.ip().to_string());
+            #[cfg(not(feature = "route"))]
+            let ip = None;
+            session.seen(user_agent, ip);
             req.extensions_mut().insert(session.clone());
             let mut res = inner.call(req).await?;
 

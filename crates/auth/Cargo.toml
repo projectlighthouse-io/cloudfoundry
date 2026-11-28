@@ -17,13 +17,17 @@ serde_json = "1"
 sha2 = "0.10"
 session = { path = "../session", features = ["route"] }
 throttle = { path = "../throttle", optional = true }
+event = { path = "../event", optional = true }
 tokio = { version = "1", features = ["sync", "rt"] }
 tower = "0.5"
 tracing = "0.1"
+uuid = { version = "1.10", features = ["serde"] }
 
 [features]
 # `AuthLayer::throttle(limiter)`: limit failed login attempts.
 throttle = ["dep:throttle"]
+# `AuthLayer::events(events, cx)`: emit `auth::events::*` on the `event` bus.
+event = ["dep:event"]
 # `Config` deserializes through `configured` (durations as "2h", "14d").
 configured = ["dep:configured"]
 
@@ -52,6 +56,12 @@ toml = "0.9"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
+"stubs/handlers/verification.rs" = "src/handlers/verification.rs"
+"stubs/handlers/email.rs" = "src/handlers/email.rs"
+"stubs/handlers/devices.rs" = "src/handlers/devices.rs"
+"stubs/requests/email.rs" = "src/requests/email.rs"
+"stubs/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
+"stubs/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
 
 [package.metadata.art.publish-sqlite]
 "stubs/types/User.ts" = "resources/js/types/User.ts"
@@ -69,6 +79,12 @@ toml = "0.9"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/sqlite/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
+"stubs/handlers/verification.rs" = "src/handlers/verification.rs"
+"stubs/handlers/email.rs" = "src/handlers/email.rs"
+"stubs/handlers/devices.rs" = "src/handlers/devices.rs"
+"stubs/requests/email.rs" = "src/requests/email.rs"
+"stubs/sqlite/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
+"stubs/sqlite/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
 
 [package.metadata.art.publish-mysql]
 "stubs/types/User.ts" = "resources/js/types/User.ts"
@@ -86,6 +102,12 @@ toml = "0.9"
 "stubs/requests/password.rs" = "src/requests/password.rs"
 "stubs/mysql/migrations/create_users.up.sql" = "migrations/{timestamp}_create_users.up.sql"
 "stubs/mysql/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
+"stubs/handlers/verification.rs" = "src/handlers/verification.rs"
+"stubs/handlers/email.rs" = "src/handlers/email.rs"
+"stubs/handlers/devices.rs" = "src/handlers/devices.rs"
+"stubs/requests/email.rs" = "src/requests/email.rs"
+"stubs/mysql/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
+"stubs/mysql/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
 
 # `art publish auth --with-ui`: Inertia handlers and Vue pages. Entries are
 # added to the driver's table; one with the same destination replaces it.
@@ -102,27 +124,46 @@ toml = "0.9"
 "stubs/pages/forgot-password.vue" = "resources/js/pages/auth/forgot-password.vue"
 "stubs/pages/reset-password.vue" = "resources/js/pages/auth/reset-password.vue"
 "stubs/pages/settings/password.vue" = "resources/js/pages/settings/password.vue"
+"stubs/ui/handlers/verification.rs" = "src/handlers/verification.rs"
+"stubs/ui/handlers/email.rs" = "src/handlers/email.rs"
+"stubs/ui/handlers/devices.rs" = "src/handlers/devices.rs"
+"stubs/pages/verify-email.vue" = "resources/js/pages/auth/verify-email.vue"
+"stubs/pages/settings/email.vue" = "resources/js/pages/settings/email.vue"
+"stubs/pages/settings/devices.vue" = "resources/js/pages/settings/devices.vue"
+"stubs/types/VerifyEmailPage.ts" = "resources/js/types/VerifyEmailPage.ts"
+"stubs/types/EmailPage.ts" = "resources/js/types/EmailPage.ts"
+"stubs/types/DevicesPage.ts" = "resources/js/types/DevicesPage.ts"
+"stubs/types/Device.ts" = "resources/js/types/Device.ts"
 
 [package.metadata.art]
 agents = """
 - Users: `src/users.rs` has `User` and `UserStore`, which implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
 - `User` and `ApiToken` are named by `uuid` (`db::Uuid<T>`); `id` is `#[serde(skip)]`. Both derive `ts_rs::TS` and export to `resources/js/types/` (`db` needs feature `ts`, on in `art new`).
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
-- Sudo mode: take `auth::PasswordConfirmed<User>` (not `Authed<User>`) in handlers for dangerous actions (disable 2FA, delete account); the user re-enters their password at `password.confirm`, valid `auth::Config::password_timeout` (3h). `auth.validate(...)` checks a password without logging in (for a second factor).
+- Sudo mode: take `auth::RecentlyConfirmed<User>` (not `Authed<User>`) in handlers for dangerous actions (disable 2FA, delete account); the user re-enters their password at `password.confirm`, valid `auth::Config::password_timeout` (15 min); users without a password confirm with a passkey or their social provider, then `auth.mark_confirmed()`. `auth.validate(...)` checks a password without logging in (for a second factor).
+- Email verification: register mails a link (`auth::verification_token`, sent by `send_verification_link` in `src/handlers/verification.rs` through `crate::mailer`); `auth.verify_email(&users, token)` follows it. Take `auth::Verified<User>` for routes that need a verified address (`.verification()` on the layer). Changing the email (`src/handlers/email.rs`) sends the link to the new address, which replaces the old one only once verified.
+- Browsers & devices (`src/handlers/devices.rs`): login records the user on the session; `session::Devices` on `UserStore::sessions()` lists them; `auth.revoke_session(&sessions, public_id)` / `auth.revoke_other_sessions(&sessions)` end them (and clear "remember me" tokens).
+- Events (feature `event`, `.events(app.events.clone(), app.clone())` on the layer): `auth::events::{SignedIn, SignedOut, SessionRevoked, EmailVerified}`.
 - Guard routes with `auth::require::<User>()` in a route group; take `Authed<User>` in handlers that need a user, `Auth<User>` when it is optional.
 - `auth::layer(...)` goes after the session and CSRF layers in `src/main.rs`. Login route and remember cookie settings: `[auth]` in config (`auth::Config`, `.config(cfg.auth)?`).
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/auth.md"""
 notes = """
 Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db::Uuid<T>` and derive `ts_rs::TS`.
-Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
+Add `features = ["throttle", "event"]` to `auth`, the dependency `throttle = { <same source as auth> }`,
+and `art publish session` and `art publish mail` first (device columns; the mailer that sends reset and
+verification links), then:
 
   src/main.rs           mod users;
                         .layer(auth::layer(users::UserStore { db: app.db.clone() })   // after the session and csrf layers
-                            .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
+                            .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60))))
+                            .verification()                                             // auth::Verified<User>
+                            .events(app.events.clone(), app.clone()))                   // feature `event`
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
   src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
+                        pub mod verification; pub mod email; pub mod devices;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register; pub mod email;
   src/routes.rs         r.post("/login", handlers::login::login).name("login");
+                        r.get("/verify-email/{token}", handlers::verification::verify).name("verification.verify");
                         r.post("/logout", handlers::login::logout).name("logout");
                         r.post("/register", handlers::register::store).name("register");
                         r.post("/forgot-password", handlers::password_reset::email).name("password.email");
@@ -131,26 +172,38 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                             r.layer(auth::require::<users::User>());
                             r.post("/password", handlers::password::update).name("password.change");
                             r.post("/confirm-password", handlers::password_confirm::store).name("password.confirm");
+                            r.post("/email/verification-notification", handlers::verification::send).name("verification.send");
+                            r.post("/email", handlers::email::update).name("email.update");
+                            r.get("/devices", handlers::devices::index).name("devices.index");
+                            r.delete("/devices", handlers::devices::destroy_others).name("devices.destroy-others");
+                            r.delete("/devices/{device}", handlers::devices::destroy).name("devices.destroy");
                         });
 
-Sudo mode: a handler taking `auth::PasswordConfirmed<User>` answers `423` until the user POSTs their
-password to /settings/confirm-password (valid 3 hours, `auth::Config::password_timeout`).
-Then run `art migrate`. Reset links are logged until you send them by mail
-(`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
+Sudo mode: a handler taking `auth::RecentlyConfirmed<User>` answers `423` until the user POSTs their
+password to /settings/confirm-password (valid 15 minutes, `auth::Config::password_timeout`).
+Then run `art migrate`. Reset and verification links are mailed with `crate::mailer` (`send_reset_link` in
+src/handlers/password_reset.rs, `send_verification_link` in src/handlers/verification.rs); with
+`[mail] url = "log"` (the default) they land in the log. Take `auth::Verified<User>` where a verified address is required. Links use `app_url` from
 config/default.toml (`env(APP_URL, ...)`): point it at your frontend.
 Optional: `[auth]` and `[limits.login]` sections (`auth::Config`, `throttle::FixedWindow`,
 feature `configured`), applied with `.config(cfg.auth.clone())?` and `Limiter::memory(cfg.limits.login)`."""
 with-ui-notes = """
 Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db::Uuid<T>` and derive `ts_rs::TS`.
-Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
+Add `features = ["throttle", "event"]` to `auth`, the dependency `throttle = { <same source as auth> }`,
+and `art publish session` and `art publish mail` first (device columns; the mailer that sends reset and
+verification links), then:
 
   src/main.rs           mod users;
                         .layer(auth::layer(users::UserStore { db: app.db.clone() })   // after the session and csrf layers
-                            .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60)))))
+                            .throttle(throttle::Limiter::memory(throttle::FixedWindow::new(5, Duration::from_secs(60))))
+                            .verification()                                             // auth::Verified<User>
+                            .events(app.events.clone(), app.clone()))                   // feature `event`
                         // "remember me": add .remember(Codec::new(Keys::parse(&key)?))
   src/handlers/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
-  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register;
+                        pub mod verification; pub mod email; pub mod devices;
+  src/requests/mod.rs   pub mod login; pub mod password; pub mod password_confirm; pub mod password_reset; pub mod register; pub mod email;
   src/routes.rs         r.get("/login", handlers::login::show).name("login");
+                        r.get("/verify-email/{token}", handlers::verification::verify).name("verification.verify");
                         r.post("/login", handlers::login::login).name("login.store");
                         r.post("/logout", handlers::login::logout).name("logout");
                         r.get("/register", handlers::register::show).name("register");
@@ -165,12 +218,20 @@ Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same 
                             r.post("/password", handlers::password::update).name("password.change");
                             r.get("/confirm-password", handlers::password_confirm::show).name("password.confirm");
                             r.post("/confirm-password", handlers::password_confirm::store).name("password.confirm.store");
+                            r.get("/verify-email", handlers::verification::notice).name("verification.notice");
+                            r.post("/email/verification-notification", handlers::verification::send).name("verification.send");
+                            r.get("/email", handlers::email::edit).name("email.edit");
+                            r.post("/email", handlers::email::update).name("email.update");
+                            r.get("/devices", handlers::devices::index).name("devices.index");
+                            r.delete("/devices", handlers::devices::destroy_others).name("devices.destroy-others");
+                            r.delete("/devices/{device}", handlers::devices::destroy).name("devices.destroy");
                         });
 
-Sudo mode: a page whose handler takes `auth::PasswordConfirmed<User>` sends the user to
-/settings/confirm-password first (valid 3 hours, `auth::Config::password_timeout`), then back.
-Then run `art migrate`. Reset links are logged until you send them by mail
-(`send_reset_link` in src/handlers/password_reset.rs). Links use `app_url` from
+Sudo mode: a page whose handler takes `auth::RecentlyConfirmed<User>` sends the user to
+/settings/confirm-password first (valid 15 minutes, `auth::Config::password_timeout`), then back.
+Then run `art migrate`. Reset and verification links are mailed with `crate::mailer` (`send_reset_link` in
+src/handlers/password_reset.rs, `send_verification_link` in src/handlers/verification.rs); with
+`[mail] url = "log"` (the default) they land in the log. Take `auth::Verified<User>` where a verified address is required. Links use `app_url` from
 config/default.toml (`env(APP_URL, ...)`).
 Optional: `[auth]` and `[limits.login]` sections (`auth::Config`, `throttle::FixedWindow`,
 feature `configured`), applied with `.config(cfg.auth.clone())?` and `Limiter::memory(cfg.limits.login)`."""

@@ -65,10 +65,24 @@ remember token are `#[serde(skip)]`. Name users and tokens by `uuid` in URLs (`U
 `UserStore::delete_token_by_uuid`); the internal `id` is for queries. Apps need `db`'s `uuid` feature (on in `art new`).
 
 Sudo mode: `auth.confirm_password(&users, password)` stamps the session; a handler taking
-`auth::PasswordConfirmed<User>` runs only within `Config::password_timeout` (3 hours) of that. Otherwise page
+`auth::RecentlyConfirmed<User>` runs only within `Config::password_timeout` (15 minutes) of that. Otherwise page
 visits go to `Config::confirm_route` (`password.confirm`) and return afterwards (`auth.intended(default)`: the
 `GET` path, or a form's same-origin `Referer`); JSON clients get `423 Locked`. Published as
-`handlers/password_confirm.rs` and `pages/auth/confirm-password.vue`.
+`handlers/password_confirm.rs` and `pages/auth/confirm-password.vue`. Accounts without a password confirm with a
+passkey or a fresh social login, then `auth.mark_confirmed()`.
+
+Email verification: implement `Verifications` (the published `UserStore` does) and add `.verification()` to the
+layer. `auth::verification_token(&users, &user, None)` makes a link for the current address (one a minute per
+user, valid an hour, stored as a SHA-256 hash); `Some(new)` for a change of address, which takes effect once the
+new address is verified. `auth.verify_email(&users, token)` follows it. `auth::Verified<User>` guards routes:
+a redirect to `verification.notice` for pages, `403` for JSON.
+
+Browsers & devices: login records the user on the session (`session::Devices` lists a user's sessions);
+`auth.revoke_session(&sessions, public_id)` and `auth.revoke_other_sessions(&sessions)` end them and clear
+"remember me" tokens.
+
+Feature `event`: `.events(app.events.clone(), app.clone())` on the layer emits `auth::events::{SignedIn, SignedOut,
+SessionRevoked, EmailVerified}`. A failing listener is logged.
 
 `auth.validate(&users, login, password)` is `attempt` without the login (throttle, verify, rehash): for a second
 factor (`factor2`) that logs in only after its own check.

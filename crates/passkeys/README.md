@@ -28,7 +28,7 @@ let pk = Passkeys::new(passkeys::SqliteStore::new(pool), &cfg.app_url, &cfg.app_
 let options = pk.start_registration(&session, user.id, &user.email, &user.email).await?;
 let added = pk.finish_registration(&session, user.id, "MacBook", &credential).await?;
 pk.rename(user.id, added.public_id, "Work laptop").await?;
-pk.remove(user.id, added.public_id).await?;             // behind auth::PasswordConfirmed
+pk.remove(user.id, added.public_id).await?;             // behind auth::RecentlyConfirmed
 
 // Passwordless
 let options = pk.start_login(&session)?;

@@ -72,10 +72,12 @@ impl UserStore {
         let user = match self.by_email(email).await? {
             Some(user) => user,
             None => {
-                sqlx::query("insert into users (uuid, name, email, password_hash) values (?, ?, ?, null)")
+                sqlx::query("insert into users (uuid, name, email, password_hash, email_verified_at) values (?, ?, ?, null, ?)")
                     .bind(db::Uuid::<crate::users::User>::new())
                     .bind(social.name.as_deref())
                     .bind(email)
+                    // The provider verified the address (unless TRUST_UNVERIFIED_EMAILS let it through).
+                    .bind((social.email_verified == Some(true)).then(|| std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)))
                     .execute(self.db.pool())
                     .await?;
                 self.by_email(email).await?.ok_or(sqlx::Error::RowNotFound)?

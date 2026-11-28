@@ -84,7 +84,7 @@ fn app(tf: Tf) -> Routes {
             "in"
         }
     });
-    let (u, t) = (users.clone(), tf.clone());
+    let (u, t) = (users.clone(), tf);
     r.post("/challenge/{kind}/{code}/{trust}", move |(auth, session, device, Path(c)): (Auth<User>, Session, Device, Path<Challenge>)| {
         let (u, t) = (u.clone(), t.clone());
         async move {

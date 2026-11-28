@@ -5,7 +5,7 @@ use route::{Body, Cx, IntoResponse, Json, http::{Response, StatusCode}};
 use serde::Serialize;
 use validate::{Errors, Valid};
 
-use crate::{requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
+use crate::{mailer::mailer, requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
 
 #[derive(Serialize)]
 pub struct Status {
@@ -16,23 +16,27 @@ pub struct Status {
 pub async fn email(cx: Cx<App>, input: Valid<Json<ForgotPassword>>) -> Result<Json<Status>, Response<Body>> {
     let users = UserStore { db: cx.db.clone() };
     match auth::reset_link_token(&users, &input.email).await {
-        Ok((user, token)) => send_reset_link(&cx.cfg.app_url, &user, &token),
+        Ok((user, token)) => send_reset_link(&cx, &user, &token).await,
         Err(ResetError::UnknownUser | ResetError::Throttled) => {}
         Err(e) => return Err(server_error(e)),
     }
     Ok(Json(Status { status: "If that email has an account, a reset link is on its way." }))
 }
 
-/// Replace with your mailer. The link points at your frontend's reset page
-/// (`app_url` in config) and works for an hour (`auth::RESET_EXPIRES`).
-fn send_reset_link(base: &str, user: &User, token: &str) {
+/// Mail the link. It points at your frontend's reset page (`app_url` in
+/// config) and works for an hour (`auth::RESET_EXPIRES`). A mail failure is
+/// logged; the user can ask again.
+async fn send_reset_link(app: &App, user: &User, token: &str) {
     let email: String = user
         .email
         .bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-._~@".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
         .collect();
-    // Logging the link is for local development only: it lets anyone who reads the log reset the password.
-    tracing::info!("password reset link for {}: {base}/reset-password/{token}?email={email}", user.email);
+    let link = format!("{}/reset-password/{token}?email={email}", app.cfg.app_url);
+    let text = format!("Someone asked to reset the password of your account.\n\nChoose a new one here (the link works for an hour):\n{link}\n\nIf it was not you, ignore this mail.");
+    if let Err(e) = mailer(app).send(mail::Message::new(&user.email, "Reset your password", text)).await {
+        tracing::error!("password reset mail to {}: {e}", user.email);
+    }
 }
 
 /// Set the new password, sign out "remember me" devices, and log in: `204`.

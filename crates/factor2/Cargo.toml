@@ -81,7 +81,7 @@ totp-rs = { version = "5.7", default-features = false }
 agents = """
 - Two-factor (`factor2`): `src/two_factor.rs` builds the app's one `TwoFactor` (`two_factor(&app)`); handlers in `src/handlers/two_factor.rs`. `POST /login` goes to `handlers::two_factor::login`, which checks the password with `auth.validate` and then logs in or starts the challenge (`TwoFactor::begin`); `challenge` finishes with `auth.login`.
 - Codes: TOTP SHA-1, 6 digits, 30 s, ±1 step, each step once. Backup codes are single use and stored hashed: show them only right after `confirm` / `regenerate_backup_codes`. Secrets are sealed with `crypt` from APP_KEY.
-- Disabling and regenerating take `auth::PasswordConfirmed<User>` (sudo mode). Emit `factor2::events::*` from handlers with `app.events.emit(app, e)`.
+- Disabling and regenerating take `auth::RecentlyConfirmed<User>` (sudo mode). Emit `factor2::events::*` from handlers with `app.events.emit(app, e)`.
 - Before deleting a user, call `two_factor(&app).disable(user_id)` (no cascades)."""
 notes = """
 Needs `art publish auth` first (its `users` table, `Login` request and confirm-password stubs).
@@ -104,7 +104,7 @@ Add the dependencies `factor2 = { <same source as auth>, features = ["<driver>",
                         });
 
 Then run `art migrate` (after auth's migration: the tables reference users). Turning two-factor
-off and new backup codes need sudo mode (`auth::PasswordConfirmed`, auth's confirm-password stubs).
+off and new backup codes need sudo mode (`auth::RecentlyConfirmed`, auth's confirm-password stubs).
 Events in `factor2::events` are emitted for listeners in src/events.rs. Before deleting a user, call
 `two_factor(&app).disable(id)`: there are no cascades."""
 with-ui-notes = """
@@ -129,7 +129,7 @@ Add the dependencies `factor2 = { <same source as auth>, features = ["<driver>",
                         });
 
 Then run `art migrate` (after auth's migration: the tables reference users). Turning two-factor
-off and new backup codes need sudo mode (`auth::PasswordConfirmed`, auth's confirm-password stubs).
+off and new backup codes need sudo mode (`auth::RecentlyConfirmed`, auth's confirm-password stubs).
 Events in `factor2::events` are emitted for listeners in src/events.rs. Before deleting a user, call
 `two_factor(&app).disable(id)`: there are no cascades.
 Link /settings/two-factor from your settings navigation."""

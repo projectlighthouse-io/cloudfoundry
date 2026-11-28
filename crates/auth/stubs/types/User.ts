@@ -13,4 +13,8 @@ uuid: Uuid<"User">,
 /**
  * Optional: the registration form may leave it out.
  */
-name: string | null, email: string, };
+name: string | null, email: string, 
+/**
+ * Unix seconds; `None` until the address is verified (`auth::Verified<User>`).
+ */
+email_verified_at: number | null, };

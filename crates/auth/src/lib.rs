@@ -16,9 +16,18 @@
 //! - [`Resets`] + [`reset_link_token`] / [`reset_password`]: "forgot password"
 //!   links. Sending the mail is the app's.
 //! - [`Auth::change_password`]: a logged-in user changes their password.
-//! - Sudo mode: [`Auth::confirm_password`] stamps the session;
-//!   [`PasswordConfirmed<U>`] only exists for a user who confirmed within
-//!   `Config::password_timeout` (else a redirect to the confirm page, or `423`).
+//! - Sudo mode: [`Auth::confirm_password`] (or [`Auth::mark_confirmed`] after
+//!   a passkey or a fresh social login) stamps the session;
+//!   [`RecentlyConfirmed<U>`] only exists for a user who confirmed within
+//!   `Config::password_timeout` (default 15 minutes; else a redirect to the
+//!   confirm page, or `423`).
+//! - Email verification: [`Verifications`] + [`verification_token`] /
+//!   [`Auth::verify_email`], also for changing the address; `.verification()`
+//!   on the layer makes [`Verified<U>`] work.
+//! - Devices: login records the user on the session (`session::Devices` lists
+//!   a user's sessions); [`Auth::revoke_session`] / [`Auth::revoke_other_sessions`].
+//! - Feature `event`: `.events(events, cx)` emits [`events`] (signed in and
+//!   out, session revoked, email verified).
 //! - [`Auth::validate`]: check a password without logging in, for a second
 //!   factor (`factor2`) that finishes the login later.
 //!
@@ -49,6 +58,12 @@ use session::Session;
 use tokio::sync::OnceCell;
 use tower::{Layer, Service};
 
+pub use verify::{
+    NewVerification, VERIFY_EXPIRES, VERIFY_THROTTLE, Verification, Verifications, VerifyError, hash_verification_token, verification_token,
+};
+
+mod verify;
+
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 const SESSION_KEY: &str = "_auth_id";
@@ -67,6 +82,63 @@ pub trait Provider: Send + Sync + 'static {
 }
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
+
+/// What `auth` emits with feature `event` (`AuthLayer::events`). Without it
+/// they are plain structs for the app to emit. `user_id` is the provider's id
+/// when it is an integer; other id types emit nothing.
+pub mod events {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct SignedIn {
+        pub user_id: i64,
+        /// "Remember me" was ticked.
+        pub remember: bool,
+        /// Logged back in from a remember cookie, not a login form.
+        pub recalled: bool,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct SignedOut {
+        pub user_id: i64,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct SessionRevoked {
+        pub user_id: i64,
+        /// The revoked session's `public_id`; `None` for "all other sessions".
+        pub session: Option<uuid::Uuid>,
+        /// How many sessions ended.
+        pub count: u64,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct EmailVerified {
+        pub user_id: i64,
+        pub email: String,
+        /// The address replaced another one (a change of email).
+        pub changed: bool,
+    }
+}
+
+#[cfg_attr(not(feature = "event"), allow(dead_code))]
+enum Emitted {
+    SignedIn(events::SignedIn),
+    SignedOut(events::SignedOut),
+    SessionRevoked(events::SessionRevoked),
+    EmailVerified(events::EmailVerified),
+}
+
+/// Whether a user's address is verified (`AuthLayer::verification`).
+type IsVerified<U> = Arc<dyn Fn(&U) -> bool + Send + Sync>;
+
+#[cfg_attr(not(feature = "event"), allow(dead_code))]
+type Emit = Arc<dyn Fn(Emitted) -> BoxFuture<'static, Result<(), Error>> + Send + Sync>;
+
+/// The provider's id as an integer, for sessions and events.
+fn int_id(id: &Value) -> Option<i64> {
+    id.as_i64()
+}
 
 /// `Provider` with the id type erased to JSON, so lookups go by user type alone.
 trait Erased<U>: Send + Sync {
@@ -364,6 +436,10 @@ struct AuthCx<U> {
     bearer: Option<Arc<str>>,
     recaller: Option<Arc<str>>,
     pending: Arc<Mutex<Pending>>,
+    verified: Option<IsVerified<U>>,
+    emit: Option<Emit>,
+    /// Events from sync calls (`login`, `logout`), emitted after the handler.
+    queued: Arc<Mutex<Vec<Emitted>>>,
 }
 
 impl<U> Clone for AuthCx<U> {
@@ -379,6 +455,9 @@ impl<U> Clone for AuthCx<U> {
             bearer: self.bearer.clone(),
             recaller: self.recaller.clone(),
             pending: self.pending.clone(),
+            verified: self.verified.clone(),
+            emit: self.emit.clone(),
+            queued: self.queued.clone(),
         }
     }
 }
@@ -409,14 +488,16 @@ pub struct Config {
     /// How long a remember cookie lasts. At most 400 days (the browser cap).
     #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
     pub remember_for: Duration,
-    /// Route name page visits go to when [`PasswordConfirmed`] needs a fresh confirmation.
+    /// Route name page visits go to when [`RecentlyConfirmed`] needs a fresh confirmation.
     pub confirm_route: String,
-    /// How long a password confirmation (sudo mode) lasts.
+    /// How long a confirmation (sudo mode) lasts.
     #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
     pub password_timeout: Duration,
+    /// Route name page visits go to when [`Verified`] finds an unverified address.
+    pub verify_route: String,
 }
 
-/// `login`, `Secure`, cookie `remember`, 400 days; `password.confirm`, 3 hours (Laravel's defaults).
+/// `login`, `Secure`, cookie `remember`, 400 days; `password.confirm`, 15 minutes; `verification.notice`.
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -425,7 +506,8 @@ impl Default for Config {
             remember_cookie: "remember".into(),
             remember_for: MAX_COOKIE_AGE,
             confirm_route: "password.confirm".into(),
-            password_timeout: Duration::from_secs(3 * 60 * 60),
+            password_timeout: Duration::from_secs(15 * 60),
+            verify_route: "verification.notice".into(),
         }
     }
 }
@@ -462,6 +544,9 @@ impl Config {
         if self.password_timeout.is_zero() {
             return err("password_timeout must be above zero".into());
         }
+        if self.verify_route.is_empty() {
+            return err("verify_route is empty".into());
+        }
         Ok(())
     }
 }
@@ -470,6 +555,22 @@ impl<U> AuthCx<U> {
     /// Cookie work for after the handler, even if a panic elsewhere poisoned the lock.
     fn pending(&self) -> std::sync::MutexGuard<'_, Pending> {
         self.pending.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Emit after the handler (from sync calls).
+    fn queue(&self, e: Emitted) {
+        if self.emit.is_some() {
+            self.queued.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
+        }
+    }
+
+    /// Emit now. A failing listener is logged: what it reports already happened.
+    async fn emit(&self, e: Emitted) {
+        if let Some(emit) = &self.emit {
+            if let Err(err) = emit(e).await {
+                tracing::error!("auth event listener failed: {err}");
+            }
+        }
     }
 }
 
@@ -506,6 +607,10 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
         if let Some((id, user)) = found {
             session.regenerate();
             session.insert(SESSION_KEY, &id)?;
+            session.set_user(int_id(&id));
+            if let Some(user_id) = int_id(&id) {
+                self.queue(Emitted::SignedIn(events::SignedIn { user_id, remember: true, recalled: true }));
+            }
             Ok(Some(user))
         } else {
             // Stale or forged: drop the cookie.
@@ -515,6 +620,10 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
     }
 
     async fn finish<B>(&self, res: &mut Response<B>) {
+        let queued = std::mem::take(&mut *self.queued.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+        for e in queued {
+            self.emit(e).await;
+        }
         let Some(r) = &self.remember else { return };
         let pending = std::mem::take(&mut *self.pending());
         match pending {
@@ -613,7 +722,7 @@ fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &str) -> Respon
 /// Make `Auth<U>`, `Authed<U>`, `require` and `guest` work. Add after the
 /// session layer.
 pub fn layer<P: Provider>(provider: P) -> AuthLayer<P> {
-    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, throttle: None, cfg: Arc::new(Config::default()) }
+    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, throttle: None, verified: None, emit: None, cfg: Arc::new(Config::default()) }
 }
 
 pub struct AuthLayer<P: Provider> {
@@ -621,6 +730,8 @@ pub struct AuthLayer<P: Provider> {
     remember: Option<Arc<RememberCfg<P::User>>>,
     tokens: Option<Arc<dyn ErasedTokens<P::User>>>,
     throttle: Option<Arc<dyn LoginLimiter>>,
+    verified: Option<IsVerified<P::User>>,
+    emit: Option<Emit>,
     cfg: Arc<Config>,
 }
 
@@ -642,6 +753,34 @@ impl<P: Provider> AuthLayer<P> {
     /// `Secure` on the remember cookie. Default `true` (browsers accept it on localhost).
     pub fn secure(mut self, secure: bool) -> Self {
         Arc::make_mut(&mut self.cfg).secure = secure;
+        self
+    }
+
+    /// Emit [`events`] on `events` with context `cx` (the app state). A
+    /// failing listener is logged, not returned.
+    #[cfg(feature = "event")]
+    pub fn events<C: Clone + Send + Sync + 'static>(mut self, events: Arc<event::Events<C>>, cx: C) -> Self {
+        self.emit = Some(Arc::new(move |e| {
+            let (events, cx) = (events.clone(), cx.clone());
+            Box::pin(async move {
+                match e {
+                    Emitted::SignedIn(e) => events.emit(&cx, e).await,
+                    Emitted::SignedOut(e) => events.emit(&cx, e).await,
+                    Emitted::SessionRevoked(e) => events.emit(&cx, e).await,
+                    Emitted::EmailVerified(e) => events.emit(&cx, e).await,
+                }
+            })
+        }));
+        self
+    }
+}
+
+impl<P: Verifications> AuthLayer<P> {
+    /// Make [`Verified<U>`] work: it asks the provider whether the user's
+    /// address is verified.
+    pub fn verification(mut self) -> Self {
+        let users = self.provider.clone();
+        self.verified = Some(Arc::new(move |user: &P::User| users.email_verified_at(user).is_some()));
         self
     }
 }
@@ -687,6 +826,8 @@ impl<P: Provider> Clone for AuthLayer<P> {
             remember: self.remember.clone(),
             tokens: self.tokens.clone(),
             throttle: self.throttle.clone(),
+            verified: self.verified.clone(),
+            emit: self.emit.clone(),
             cfg: self.cfg.clone(),
         }
     }
@@ -743,6 +884,9 @@ where
             bearer: l.tokens.as_ref().and_then(|_| bearer(req.headers())).map(Into::into),
             recaller: l.remember.as_ref().and_then(|_| cookie(req.headers(), &l.cfg.remember_cookie)).map(Into::into),
             pending: Arc::default(),
+            verified: l.verified.clone(),
+            emit: l.emit.clone(),
+            queued: Arc::default(),
         };
         req.extensions_mut().insert(cx.clone());
         Box::pin(async move {
@@ -796,17 +940,27 @@ impl<U> Auth<U> {
         self.cx.bearer.as_deref()
     }
 
-    /// Log `user` in. Regenerates the session id.
+    /// Log `user` in. Regenerates the session id and records the user on
+    /// the session (for `session::Devices`).
     pub fn login(&self, user: &U) {
+        self.sign_in(user, false);
+    }
+
+    fn sign_in(&self, user: &U, remember: bool) {
+        let id = self.cx.provider.id(user);
         self.session.regenerate();
-        if let Err(e) = self.session.insert(SESSION_KEY, &self.cx.provider.id(user)) {
+        if let Err(e) = self.session.insert(SESSION_KEY, &id) {
             tracing::error!("storing the logged-in user failed: {e}");
+        }
+        self.session.set_user(int_id(&id));
+        if let Some(user_id) = int_id(&id) {
+            self.cx.queue(Emitted::SignedIn(events::SignedIn { user_id, remember, recalled: false }));
         }
     }
 
     /// `login`, plus a remember cookie (needs `.remember(codec)` on the layer).
     pub fn login_remember(&self, user: &U) {
-        self.login(user);
+        self.sign_in(user, true);
         if self.cx.remember.is_none() {
             return tracing::warn!("login_remember without `.remember(codec)` on the auth layer; no cookie set");
         }
@@ -816,6 +970,9 @@ impl<U> Auth<U> {
     /// Log out. Invalidates the whole session and, with remember enabled,
     /// clears the stored token and the cookie.
     pub fn logout(&self) {
+        if let Some(user_id) = self.user.as_ref().and_then(|u| int_id(&self.cx.provider.id(u))) {
+            self.cx.queue(Emitted::SignedOut(events::SignedOut { user_id }));
+        }
         self.session.invalidate();
         if self.cx.remember.is_some() {
             let id = self.user.as_ref().map(|u| self.cx.provider.id(u));
@@ -924,7 +1081,9 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
 
 impl<U: Clone + Send + Sync + 'static> Auth<U> {
     /// Sudo mode: check the logged-in user's password and stamp the session,
-    /// so [`PasswordConfirmed`] passes for `Config::password_timeout`.
+    /// so [`RecentlyConfirmed`] passes for `Config::password_timeout`.
+    /// [`ChangeError::NoPassword`] for social-only accounts: confirm them with
+    /// a passkey or a fresh provider login, then [`mark_confirmed`](Self::mark_confirmed).
     pub async fn confirm_password<P>(&self, users: &P, password: &str) -> Result<(), ChangeError>
     where
         P: Credentials<User = U>,
@@ -936,10 +1095,18 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
         if !ok {
             return Err(ChangeError::WrongPassword);
         }
-        self.session.insert(CONFIRMED_KEY, &unix_now()).map_err(|e| ChangeError::Other(e.into()))
+        self.mark_confirmed().map_err(|e| ChangeError::Other(e.into()))
     }
 
-    /// The page [`PasswordConfirmed`] sent the user away from, or `default`.
+    /// Sudo mode for a user who proved it is them another way (a passkey, a
+    /// fresh login with their social provider): stamp the session as
+    /// [`confirm_password`](Self::confirm_password) does. Call it only after
+    /// such a check passed for the logged-in user.
+    pub fn mark_confirmed(&self) -> Result<(), serde_json::Error> {
+        self.session.insert(CONFIRMED_KEY, &unix_now())
+    }
+
+    /// The page [`RecentlyConfirmed`] sent the user away from, or `default`.
     /// Taken: a second call returns `default`.
     pub fn intended(&self, default: &str) -> String {
         let url = self.session.get::<String>(INTENDED_KEY).ok().flatten();
@@ -948,32 +1115,65 @@ impl<U: Clone + Send + Sync + 'static> Auth<U> {
     }
 }
 
-/// The logged-in user, who confirmed their password within
-/// `Config::password_timeout` ([`Auth::confirm_password`]). Otherwise page
-/// visits are redirected to `Config::confirm_route` (a `GET`, or the
-/// same-origin `Referer` of a form submission, is remembered for
-/// [`Auth::intended`]) and JSON clients get `423 Locked`. Anonymous
-/// requests get the login redirect or `401`.
-pub struct PasswordConfirmed<U>(pub U);
+impl<U: Clone + Send + Sync + 'static> Auth<U> {
+    /// End one of the logged-in user's sessions, by its `public_id`
+    /// (`session::Device`). "Remember me" tokens are cleared too, or the
+    /// revoked browser would log back in; other browsers stay logged in until
+    /// their session ends. `false` if the user has no such session.
+    pub async fn revoke_session<St: session::Devices>(&self, sessions: &St, public_id: uuid::Uuid) -> Result<bool, Error> {
+        let Some(user_id) = self.session.user_id() else { return Ok(false) };
+        if !sessions.revoke(user_id, public_id).await? {
+            return Ok(false);
+        }
+        self.forget_remember_tokens().await?;
+        self.cx.emit(Emitted::SessionRevoked(events::SessionRevoked { user_id, session: Some(public_id), count: 1 })).await;
+        Ok(true)
+    }
 
-impl<U> Deref for PasswordConfirmed<U> {
+    /// End all of the logged-in user's sessions but this one, and clear
+    /// "remember me" tokens. Returns how many sessions ended.
+    pub async fn revoke_other_sessions<St: session::Devices>(&self, sessions: &St) -> Result<u64, Error> {
+        let (Some(user_id), Some(keep)) = (self.session.user_id(), self.session.public_id()) else { return Ok(0) };
+        let count = sessions.revoke_others(user_id, keep).await?;
+        self.forget_remember_tokens().await?;
+        self.cx.emit(Emitted::SessionRevoked(events::SessionRevoked { user_id, session: None, count })).await;
+        Ok(count)
+    }
+
+    async fn forget_remember_tokens(&self) -> Result<(), Error> {
+        match (&self.cx.remember, &self.user) {
+            (Some(r), Some(user)) => r.store.set(self.cx.provider.id(user), None).await,
+            _ => Ok(()),
+        }
+    }
+}
+
+/// The logged-in user, who confirmed it is them within
+/// `Config::password_timeout` (default 15 minutes): [`Auth::confirm_password`]
+/// or [`Auth::mark_confirmed`]. Otherwise page visits are redirected to
+/// `Config::confirm_route` (a `GET`, or the same-origin `Referer` of a form
+/// submission, is remembered for [`Auth::intended`]) and JSON clients get
+/// `423 Locked`. Anonymous requests get the login redirect or `401`.
+pub struct RecentlyConfirmed<U>(pub U);
+
+impl<U> Deref for RecentlyConfirmed<U> {
     type Target = U;
     fn deref(&self) -> &U {
         &self.0
     }
 }
 
-impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for PasswordConfirmed<U> {
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for RecentlyConfirmed<U> {
     async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         let (user, cx, session) = current::<U>(&parts.extensions).await?;
         let Some(user) = user else { return Err(unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.login_route)) };
         let Some(session) = session else {
-            tracing::error!("`PasswordConfirmed` needs a session; add `session::layer` before `auth::layer`");
+            tracing::error!("`RecentlyConfirmed` needs a session; add `session::layer` before `auth::layer`");
             return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
         };
         let at = session.get::<i64>(CONFIRMED_KEY).ok().flatten();
         if at.is_some_and(|at| unix_now().saturating_sub(at) < cx.cfg.password_timeout.as_secs() as i64) {
-            return Ok(PasswordConfirmed(user));
+            return Ok(RecentlyConfirmed(user));
         }
         if let Some(path) = intended_path(parts) {
             if let Err(e) = session.insert(INTENDED_KEY, &path) {
@@ -1000,7 +1200,44 @@ fn intended_path(parts: &Parts) -> Option<String> {
     (origin == host && path.starts_with('/') && !path.starts_with("//")).then(|| path.to_owned())
 }
 
-impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for PasswordConfirmed<U> {
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for RecentlyConfirmed<U> {
+    fn from_request(req: Request<Body>, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send {
+        route::from_parts(req, state)
+    }
+}
+
+/// The logged-in user, whose email address is verified (needs
+/// `.verification()` on the layer). Otherwise page visits are redirected to
+/// `Config::verify_route` and JSON clients get `403`. Anonymous requests get
+/// the login redirect or `401`.
+pub struct Verified<U>(pub U);
+
+impl<U> Deref for Verified<U> {
+    type Target = U;
+    fn deref(&self) -> &U {
+        &self.0
+    }
+}
+
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for Verified<U> {
+    async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
+        let (user, cx, _) = current::<U>(&parts.extensions).await?;
+        let Some(user) = user else { return Err(unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.login_route)) };
+        let Some(verified) = &cx.verified else {
+            tracing::error!("`Verified` needs `.verification()` on the auth layer");
+            return Err(StatusCode::INTERNAL_SERVER_ERROR.into_response());
+        };
+        if verified(&user) {
+            return Ok(Verified(user));
+        }
+        Err(match unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.verify_route) {
+            res if res.status() == StatusCode::UNAUTHORIZED => StatusCode::FORBIDDEN.into_response(),
+            res => res,
+        })
+    }
+}
+
+impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequest<S> for Verified<U> {
     fn from_request(req: Request<Body>, state: &Arc<S>) -> impl Future<Output = Result<Self, Response<Body>>> + Send {
         route::from_parts(req, state)
     }

@@ -25,6 +25,14 @@ request. `regenerate()` on login, `invalidate()` on logout. Tables: `art publish
 session [--driver sqlite|mysql]`. `MemoryStore` and SQLite are single-server; run several
 instances on Postgres, MySQL or Redis.
 
+## Browsers & devices
+
+A session with a user (`session.set_user(Some(id))`; `auth` calls it on login) keeps its user agent, IP and
+`last_seen_at` (written at most once a minute). The SQL stores and `MemoryStore` implement `Devices`:
+`devices(user)`, `revoke(user, public_id)`, `revoke_others(user, keep)`. `session.public_id()` is this browser.
+Columns ship as the `add_session_devices` migration. `RedisStore` cannot list by user. Feature `ts` derives
+`ts_rs::TS` on `Device`.
+
 ## Config
 
 `.config(cfg)` sets every option and returns `Err(ConfigError)` for an invalid

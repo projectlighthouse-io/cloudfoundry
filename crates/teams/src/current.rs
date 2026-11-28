@@ -71,6 +71,7 @@ impl<S: Send + Sync, R: Role> FromRequestParts<S> for CurrentTeam<R> {
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         })?;
         let user = gate.0.user(parts).await?;
+        #[allow(clippy::result_large_err, reason = "the error is the response itself, returned once per request")]
         let found = |team: Option<Membership<R>>, session: Session, gate: TeamGate<R>| Ok(Self { team, session, gate, user });
 
         if let Some(id) = session.get::<i64>(KEY).ok().flatten() {

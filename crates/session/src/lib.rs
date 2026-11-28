@@ -13,6 +13,11 @@
 //!
 //! Lazy: a request that never changes the session writes no row and sets no
 //! cookie.
+//!
+//! Devices: a session that belongs to a user ([`Session::set_user`], which
+//! `auth` calls on login) records its browser (user agent, IP) and when it was
+//! last seen, refreshed at most once a minute. Stores that implement
+//! [`Devices`] list a user's sessions and revoke them.
 
 mod layer;
 mod store;
@@ -29,7 +34,9 @@ pub use store::PostgresStore;
 pub use store::RedisStore;
 #[cfg(feature = "sqlite")]
 pub use store::SqliteStore;
-pub use store::{MemoryStore, Prune, Record, Store};
+pub use store::{Devices, MemoryStore, Prune, Record, Store};
+/// The type of [`Device::public_id`], e.g. for `Path<session::Uuid>`.
+pub use uuid::Uuid;
 
 use std::{
     collections::BTreeMap,
@@ -46,6 +53,24 @@ pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// Key the CSRF token lives under. Cleared on `regenerate`.
 const TOKEN_KEY: &str = "_token";
+/// A user's session refreshes `last_seen_at` at most this often (seconds).
+const SEEN_EVERY: i64 = 60;
+/// Longer user agents are cut; this is plenty to recognise a browser.
+const MAX_USER_AGENT: usize = 512;
+
+/// The browser a session belongs to, for a "Browsers & devices" list.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+pub struct Device {
+    /// Names the session in URLs and JSON; the session id itself never leaves the cookie.
+    #[cfg_attr(feature = "ts", ts(type = "string"))]
+    pub public_id: uuid::Uuid,
+    pub user_agent: Option<String>,
+    pub ip: Option<String>,
+    /// Unix seconds.
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub last_seen_at: i64,
+}
 
 /// A random session id. Never derived from user data; only ever sent encrypted.
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -76,6 +101,10 @@ struct Stored {
     data: BTreeMap<String, Value>,
     /// Keys flashed by the request that saved this record.
     flash: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_id: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    device: Option<Device>,
 }
 
 #[derive(Default)]
@@ -88,6 +117,10 @@ struct State {
     dirty: bool,
     /// Ids to delete: replaced by `regenerate` or emptied.
     stale: Vec<SessionId>,
+    user_id: Option<i64>,
+    device: Option<Device>,
+    /// This request's user agent and IP.
+    seen: (Option<String>, Option<String>),
 }
 
 /// The current request's session. Cheap to clone; clones share state.
@@ -147,6 +180,35 @@ impl Session {
         s.data.clear();
         s.flash_new.clear();
         s.flash_old.clear();
+        s.user_id = None;
+        s.device = None;
+    }
+
+    /// Record who the session belongs to (`auth` does on login), or `None`.
+    /// Sessions with a user show up in [`Devices::devices`].
+    pub fn set_user(&self, user: Option<i64>) {
+        let mut s = self.state();
+        s.user_id = user;
+        if s.device.is_none() {
+            s.device = Some(Device { public_id: uuid::Uuid::new_v4(), user_agent: None, ip: None, last_seen_at: 0 });
+        }
+        s.dirty = true;
+    }
+
+    pub fn user_id(&self) -> Option<i64> {
+        self.state().user_id
+    }
+
+    /// This session's [`Device::public_id`], once it has one (after
+    /// [`set_user`](Self::set_user) or its first save). Mark "this device" in
+    /// a list with it, or keep it in [`Devices::revoke_others`].
+    pub fn public_id(&self) -> Option<uuid::Uuid> {
+        self.state().device.as_ref().map(|d| d.public_id)
+    }
+
+    /// The request's user agent and IP, set by the layer.
+    fn seen(&self, user_agent: Option<String>, ip: Option<String>) {
+        self.state().seen = (user_agent, ip);
     }
 
     fn load(record: Record) -> Self {
@@ -156,6 +218,8 @@ impl Session {
             data: stored.data,
             flash_old: stored.flash,
             expires_at: record.expires_at,
+            user_id: stored.user_id,
+            device: stored.device,
             ..State::default()
         })))
     }
@@ -182,6 +246,13 @@ impl Session {
         }
         // Sliding expiry without a write per request: refresh past half-life.
         let refresh = s.id.is_some() && s.expires_at - now < lifetime / 2;
+        // A user's session also writes when the browser changed or a minute passed.
+        // ponytail: the touch rewrites the whole record; a separate `touch` query if rows get big.
+        let (ua, ip) = s.seen.clone();
+        let touch = s.id.is_some()
+            && s.user_id.is_some()
+            && s.device.as_ref().is_none_or(|d| now - d.last_seen_at >= SEEN_EVERY || d.user_agent != ua || d.ip != ip);
+        let refresh = refresh || touch;
         let mut plan = Plan { delete: std::mem::take(&mut s.stale), save: None, expire_cookie: false };
 
         if s.data.is_empty() {
@@ -193,10 +264,14 @@ impl Session {
             plan.expire_cookie = !plan.delete.is_empty();
         } else if s.dirty || refresh {
             let id = s.id.get_or_insert_with(SessionId::random).clone();
-            let stored = Stored { data: std::mem::take(&mut s.data), flash: std::mem::take(&mut s.flash_new) };
+            let device = s.device.get_or_insert_with(|| Device { public_id: uuid::Uuid::new_v4(), user_agent: None, ip: None, last_seen_at: 0 });
+            (device.user_agent, device.ip, device.last_seen_at) = (ua, ip, now);
+            let device = device.clone();
+            let user_id = s.user_id;
+            let stored = Stored { data: std::mem::take(&mut s.data), flash: std::mem::take(&mut s.flash_new), user_id, device: Some(device.clone()) };
             // Session values are already JSON, so this cannot fail; if it ever did, keep the old record.
             match serde_json::to_vec(&stored) {
-                Ok(data) => plan.save = Some(Record { id, data, expires_at: now + lifetime }),
+                Ok(data) => plan.save = Some(Record { id, data, expires_at: now + lifetime, user_id, device: Some(device) }),
                 Err(e) => tracing::error!("encoding the session failed: {e}"),
             }
         }
@@ -300,6 +375,40 @@ mod tests {
         s.invalidate();
         let plan = s.finish(0, DAY);
         assert!(plan.save.is_none() && plan.delete == vec![second.id] && plan.expire_cookie);
+    }
+
+    #[test]
+    fn a_users_session_records_its_device_once_a_minute() {
+        let s = Session::empty();
+        s.seen(Some("Firefox".into()), Some("10.0.0.1".into()));
+        s.insert("_auth_id", &7).unwrap();
+        s.set_user(Some(7));
+        let public_id = s.public_id().unwrap();
+        let rec = s.finish(1000, DAY).save.unwrap();
+        let device = rec.device.clone().unwrap();
+        assert_eq!((rec.user_id, device.public_id, device.user_agent.as_deref(), device.last_seen_at), (Some(7), public_id, Some("Firefox"), 1000));
+
+        let seen = |rec: &Record, at: i64, ua: &str| {
+            let s = Session::load(rec.clone());
+            s.seen(Some(ua.into()), Some("10.0.0.1".into()));
+            s.finish(at, DAY).save
+        };
+        assert!(seen(&rec, 1059, "Firefox").is_none(), "within the minute: no write");
+        let later = seen(&rec, 1060, "Firefox").unwrap();
+        let device = later.device.clone().unwrap();
+        assert_eq!((device.public_id, device.last_seen_at), (public_id, 1060));
+        assert!(seen(&rec, 1001, "Safari").is_some(), "another browser writes at once");
+
+        let s = Session::load(later);
+        s.regenerate();
+        assert_eq!(s.public_id(), Some(public_id), "a new id keeps the device");
+        s.invalidate();
+        assert_eq!((s.public_id(), s.user_id()), (None, None), "logout forgets it");
+
+        let anon = Session::empty();
+        anon.insert("k", &1).unwrap();
+        let rec = anon.finish(0, DAY).save.unwrap();
+        assert!(Session::load(rec).finish(120, DAY).save.is_none(), "anonymous sessions are not touched");
     }
 
     #[test]

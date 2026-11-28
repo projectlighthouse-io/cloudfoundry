@@ -9,10 +9,11 @@ create table users_new (
     email text not null unique,
     password_hash text not null,
     remember_token text,
+    email_verified_at integer,
     created_at text not null default current_timestamp
 );
-insert into users_new (id, uuid, name, email, password_hash, remember_token, created_at)
-    select id, uuid, name, email, password_hash, remember_token, created_at from users;
+insert into users_new (id, uuid, name, email, password_hash, remember_token, email_verified_at, created_at)
+    select id, uuid, name, email, password_hash, remember_token, email_verified_at, created_at from users;
 drop table users;
 alter table users_new rename to users;
 commit;

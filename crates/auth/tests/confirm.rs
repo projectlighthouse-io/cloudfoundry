@@ -1,11 +1,11 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
-//! Sudo mode (`confirm_password` + `PasswordConfirmed`) and `validate`.
+//! Sudo mode (`confirm_password` + `RecentlyConfirmed`) and `validate`.
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 
-use auth::{Auth, Authed, ChangeError, Credentials, PasswordConfirmed, Provider};
+use auth::{Auth, Authed, ChangeError, Credentials, RecentlyConfirmed, Provider};
 use http_body_util::BodyExt;
 use route::{
     Path, Router, Routes, empty,
@@ -72,8 +72,8 @@ fn app(timeout: Duration) -> Routes {
         }
     });
     r.get("/confirm-password", |_: ()| async { "confirm page" }).name("password.confirm");
-    r.get("/danger", |_: PasswordConfirmed<User>| async { "danger zone" });
-    r.delete("/danger", |_: PasswordConfirmed<User>| async { "deleted" });
+    r.get("/danger", |_: RecentlyConfirmed<User>| async { "danger zone" });
+    r.delete("/danger", |_: RecentlyConfirmed<User>| async { "deleted" });
     r.get("/me", |_: Authed<User>| async { "ada" });
     r.layer(session::layer(session::MemoryStore::new(), codec)).layer(auth::layer(users).config(cfg).unwrap());
     r.build(()).unwrap()

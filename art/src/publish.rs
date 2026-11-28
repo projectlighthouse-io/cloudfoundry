@@ -230,6 +230,18 @@ mod tests {
     }
 
     #[test]
+    fn migrations_keep_the_order_of_cargo_toml() {
+        // `cargo metadata` lists the table as written; an alphabetical map would put `add_` first.
+        let table: serde_json::Value = serde_json::from_str(
+            r#"{"stubs/create_users.up.sql": "migrations/{timestamp}_create_users.up.sql",
+                "stubs/add_email_verification.up.sql": "migrations/{timestamp}_add_email_verification.up.sql"}"#,
+        )
+        .unwrap();
+        let entries = super::pairs(table.as_object().unwrap());
+        assert_eq!(super::versions(&entries, "1").iter().map(|(n, _)| *n).collect::<Vec<_>>(), ["create_users", "add_email_verification"]);
+    }
+
+    #[test]
     fn timestamp_shape() {
         let t = super::timestamp();
         assert_eq!(t.len(), 14);

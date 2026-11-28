@@ -274,10 +274,10 @@ impl<A: throttle::Algorithm, St: throttle::Store> Limiter for throttle::Limiter<
         Box::pin(async move { Ok(Some(throttle::Limiter::check(self, key).await?).filter(|d| !d.allowed).map(|d| d.retry_after)) })
     }
     fn hit<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(async move { throttle::Limiter::hit(self, key).await.map(drop).map_err(Into::into) })
+        Box::pin(async move { throttle::Limiter::hit(self, key).await.map(drop) })
     }
     fn clear<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(async move { throttle::Limiter::clear(self, key).await.map_err(Into::into) })
+        Box::pin(throttle::Limiter::clear(self, key))
     }
 }
 
@@ -396,13 +396,13 @@ impl<S: Store> TwoFactor<S> {
     }
 
     /// Turn two-factor off: deletes the secret, backup codes and trusted
-    /// browsers. Gate it behind `auth::PasswordConfirmed`.
+    /// browsers. Gate it behind `auth::RecentlyConfirmed`.
     pub async fn disable(&self, user: i64) -> Result<(), Error> {
         self.store.delete_all(user).await
     }
 
     /// New backup codes; the old ones stop working. Gate it behind
-    /// `auth::PasswordConfirmed`.
+    /// `auth::RecentlyConfirmed`.
     pub async fn regenerate_backup_codes(&self, user: i64) -> Result<Vec<String>, Error> {
         if !self.enabled(user).await? {
             return Err(Error::NotEnabled);
@@ -452,10 +452,10 @@ impl<S: Store> TwoFactor<S> {
 
     /// The user whose password was checked and who still needs a code.
     pub fn pending(&self, session: &Session) -> Option<i64> {
-        self.pending_login(session).map(|p| p.user_id)
+        Self::pending_login(session).map(|p| p.user_id)
     }
 
-    fn pending_login(&self, session: &Session) -> Option<Pending> {
+    fn pending_login(session: &Session) -> Option<Pending> {
         let pending = session.get::<Pending>(PENDING_KEY).ok().flatten()?;
         if pending.expires_at <= now() {
             session.remove(PENDING_KEY);
@@ -467,7 +467,7 @@ impl<S: Store> TwoFactor<S> {
     /// Check the code for the pending login. On success the pending login is
     /// gone: call `auth.login` (it rotates the session id).
     pub async fn challenge(&self, session: &Session, ip: Option<IpAddr>, code: Code<'_>) -> Result<Passed, ChallengeError> {
-        let pending = self.pending_login(session).ok_or(ChallengeError::NoPending)?;
+        let pending = Self::pending_login(session).ok_or(ChallengeError::NoPending)?;
         let user = pending.user_id;
         let key = format!("two-factor:{user}|{}", ip.map(|ip| ip.to_string()).unwrap_or_default());
         let other = |e: BoxError| ChallengeError::Other(Error::Other(e));
@@ -480,10 +480,7 @@ impl<S: Store> TwoFactor<S> {
             Code::Totp(c) => self.check_totp(user, c).await.map_err(ChallengeError::Other)?.then_some(None),
             Code::Backup(c) => {
                 let used = self.store.use_backup_code(user, &hash_code(c), now()).await.map_err(ChallengeError::Other)?;
-                match used {
-                    true => Some(Some(self.store.unused_backup_codes(user).await.map_err(ChallengeError::Other)?)),
-                    false => None,
-                }
+                if used { Some(Some(self.store.unused_backup_codes(user).await.map_err(ChallengeError::Other)?)) } else { None }
             }
         };
         let Some(backup_codes_left) = backup_codes_left else {
@@ -502,7 +499,7 @@ impl<S: Store> TwoFactor<S> {
     /// Finish the pending login with a second factor checked elsewhere (a
     /// passkey, verified for [`TwoFactor::pending`]'s user). Then call `auth.login`.
     pub fn pass(&self, session: &Session) -> Result<Passed, ChallengeError> {
-        let pending = self.pending_login(session).ok_or(ChallengeError::NoPending)?;
+        let pending = Self::pending_login(session).ok_or(ChallengeError::NoPending)?;
         session.remove(PENDING_KEY);
         Ok(Passed { user_id: pending.user_id, remember: pending.remember, backup_codes_left: None })
     }

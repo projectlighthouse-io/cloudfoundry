@@ -1,6 +1,6 @@
 //! Published by `art publish auth`. App code: change it freely.
 //!
-//! Sudo mode: routes whose handlers take `auth::PasswordConfirmed<User>` answer
+//! Sudo mode: routes whose handlers take `auth::RecentlyConfirmed<User>` answer
 //! `423 Locked` until the user confirms their password here.
 
 use auth::{Auth, ChangeError};

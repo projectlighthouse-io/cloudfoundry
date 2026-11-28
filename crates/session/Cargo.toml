@@ -15,18 +15,20 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tower = "0.5"
 tracing = "0.1"
+uuid = { version = "1.10", features = ["v4", "serde"] }
 
 clap = { version = "4", features = ["derive"], optional = true }
 csrf = { path = "../csrf", optional = true }
 route = { path = "../route", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
+ts-rs = { version = "12", optional = true }
 redis = { version = "1.2", default-features = false, features = ["tokio-comp", "connection-manager"], optional = true }
 
 [features]
 # SQL stores. Publish the table with `art publish session [--driver sqlite|mysql]`.
-postgres = ["dep:sqlx", "sqlx/postgres"]
-sqlite = ["dep:sqlx", "sqlx/sqlite"]
-mysql = ["dep:sqlx", "sqlx/mysql"]
+postgres = ["dep:sqlx", "sqlx/postgres", "sqlx/uuid"]
+sqlite = ["dep:sqlx", "sqlx/sqlite", "sqlx/uuid"]
+mysql = ["dep:sqlx", "sqlx/mysql", "sqlx/uuid"]
 # Sessions in Redis or Valkey: no table, keys expire on their own.
 redis = ["dep:redis"]
 # `Session` as a handler input.
@@ -35,6 +37,8 @@ route = ["dep:route"]
 csrf = ["dep:csrf"]
 # `session::command::prune` for `session:prune`.
 command = ["dep:clap"]
+# `ts_rs::TS` for `Device`, for page prop types.
+ts = ["dep:ts-rs"]
 # `Config` deserializes through `configured` (durations as "2h", "14d").
 configured = ["dep:configured"]
 
@@ -50,21 +54,32 @@ toml = "0.9"
 [package.metadata.art.publish]
 "stubs/migrations/create_sessions.up.sql" = "migrations/{timestamp}_create_sessions.up.sql"
 "stubs/migrations/create_sessions.down.sql" = "migrations/{timestamp}_create_sessions.down.sql"
+"stubs/migrations/add_session_devices.up.sql" = "migrations/{timestamp}_add_session_devices.up.sql"
+"stubs/migrations/add_session_devices.down.sql" = "migrations/{timestamp}_add_session_devices.down.sql"
 
 [package.metadata.art.publish-sqlite]
 "stubs/migrations/sqlite/create_sessions.up.sql" = "migrations/{timestamp}_create_sessions.up.sql"
 "stubs/migrations/sqlite/create_sessions.down.sql" = "migrations/{timestamp}_create_sessions.down.sql"
+"stubs/migrations/sqlite/add_session_devices.up.sql" = "migrations/{timestamp}_add_session_devices.up.sql"
+"stubs/migrations/sqlite/add_session_devices.down.sql" = "migrations/{timestamp}_add_session_devices.down.sql"
 
 [package.metadata.art.publish-mysql]
 "stubs/migrations/mysql/create_sessions.up.sql" = "migrations/{timestamp}_create_sessions.up.sql"
 "stubs/migrations/mysql/create_sessions.down.sql" = "migrations/{timestamp}_create_sessions.down.sql"
+"stubs/migrations/mysql/add_session_devices.up.sql" = "migrations/{timestamp}_add_session_devices.up.sql"
+"stubs/migrations/mysql/add_session_devices.down.sql" = "migrations/{timestamp}_add_session_devices.down.sql"
 
 [package.metadata.art]
 agents = """
 - `session::layer(store, codec)` must be the first layer in `src/main.rs`; CSRF and auth read the session it adds.
 - Cookie settings come from `[session]` in `config/default.toml` (`session::Config`, feature `configured`), applied with `.config(cfg.session)?`.
+- Browsers & devices: a logged-in session stores its user, user agent, IP and `last_seen_at` (at most once a minute); list and end them with `session::Devices` (`devices(user)`, `revoke(user, public_id)`, `revoke_others(user, session.public_id())`). Not on `RedisStore`.
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/session.md"""
-notes = "Run `art migrate` to create the sessions table."
+notes = """
+Run `art migrate` to create the sessions table (and its device columns: user, browser, IP, last seen).
+Apps that published session before get only the `add_session_devices` migration.
+Browsers & devices: `session::Devices` on the SQL and memory stores (`devices`, `revoke`, `revoke_others`);
+`auth` fills the user on login. Not on `RedisStore`."""
 
 [lints]
 workspace = true

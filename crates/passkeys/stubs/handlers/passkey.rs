@@ -5,7 +5,7 @@
 //! session), then the browser posts `credential.toJSON()` back.
 //! `second_factor*` need `art publish factor2`; without it delete them and the `factor2` and `two_factor` imports.
 
-use auth::{Auth, Authed, PasswordConfirmed, Provider};
+use auth::{Auth, Authed, RecentlyConfirmed, Provider};
 use factor2::Device;
 use passkeys::{CreationChallengeResponse, Passkey, RequestChallengeResponse, Uuid};
 use route::{
@@ -79,7 +79,7 @@ pub async fn rename(cx: Cx<App>, user: Authed<User>, Path(passkey): Path<Uuid<Pa
 }
 
 /// Needs a recent password confirmation (423 until then).
-pub async fn destroy(cx: Cx<App>, user: PasswordConfirmed<User>, Path(passkey): Path<Uuid<Passkey>>) -> Result<StatusCode> {
+pub async fn destroy(cx: Cx<App>, user: RecentlyConfirmed<User>, Path(passkey): Path<Uuid<Passkey>>) -> Result<StatusCode> {
     match passkeys(&cx).remove(user.id, passkey).await.map_err(failed)? {
         true => Ok(StatusCode::NO_CONTENT),
         false => Err(StatusCode::NOT_FOUND.into_response()),
@@ -116,4 +116,16 @@ pub async fn second_factor(cx: Cx<App>, auth: Auth<User>, session: Session, devi
         res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&cookie).map_err(server_error)?);
     }
     Ok(res)
+}
+
+/// Sudo mode with a passkey: for accounts without a password, or instead of
+/// typing it. Then `auth::RecentlyConfirmed<User>` passes.
+pub async fn confirm_options(cx: Cx<App>, user: Authed<User>, session: Session) -> Result<Json<RequestChallengeResponse>> {
+    Ok(Json(passkeys(&cx).start_authentication(&session, user.id).await.map_err(failed)?))
+}
+
+pub async fn confirm(cx: Cx<App>, auth: Auth<User>, user: Authed<User>, session: Session, ip: ClientAddr, input: Valid<Json<UsePasskey>>) -> Result<StatusCode> {
+    passkeys(&cx).finish_authentication(&session, Some(ip.0.ip()), user.id, &input.credential).await.map_err(failed)?;
+    auth.mark_confirmed().map_err(server_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }

@@ -3,4 +3,8 @@
 /**
  * Props for `resources/js/pages/auth/confirm-password.vue`.
  */
-export type ConfirmPasswordPage = { email: string, };
+export type ConfirmPasswordPage = { email: string, 
+/**
+ * `false` for social-only accounts: offer a passkey or the provider instead.
+ */
+has_password: boolean, };

@@ -71,7 +71,7 @@ agents = """
 - Passkeys (`passkeys`, webauthn-rs): `src/passkey.rs` builds the app's one `Passkeys` (`passkeys(&app)`, rp id = APP_URL's host); handlers in `src/handlers/passkey.rs`. Each ceremony is two requests: `start_*` returns options for the browser and keeps the state in the session (5 minutes), `finish_*` checks the browser's answer. `resources/js/passkeys.ts` does the browser half.
 - Passwordless: `start_login` / `finish_login` (discoverable credentials), then `auth.login`; a passkey verifies the user itself, so it skips the two-factor challenge.
 - Second factor: on the factor2 challenge, `start_authentication(user)` / `finish_authentication`, then `TwoFactor::pass` and `auth.login`.
-- Removing a passkey takes `auth::PasswordConfirmed<User>`. With feature `event`, `Passkeys` emits `passkeys::events::*` itself. Before deleting a user, call `passkeys(&app).delete_all(id)` (no cascades)."""
+- Removing a passkey takes `auth::RecentlyConfirmed<User>`. `confirm_options` / `confirm` are sudo mode with a passkey (`auth.mark_confirmed()`), for accounts without a password. With feature `event`, `Passkeys` emits `passkeys::events::*` itself. Before deleting a user, call `passkeys(&app).delete_all(id)` (no cascades)."""
 notes = """
 Needs `art publish auth` first (its `users` table and confirm-password stubs); the second-factor
 handlers need `art publish factor2` too (delete `second_factor_*` if you skip it). Add the dependency
@@ -92,6 +92,8 @@ postgres or mysql), then:
                             r.post("/passkeys", handlers::passkey::store).name("passkeys.store");
                             r.patch("/passkeys/{passkey}", handlers::passkey::rename).name("passkeys.update");
                             r.delete("/passkeys/{passkey}", handlers::passkey::destroy).name("passkeys.destroy");
+                            r.post("/confirm-passkey/options", handlers::passkey::confirm_options).name("password.confirm.passkey.options");
+                            r.post("/confirm-passkey", handlers::passkey::confirm).name("password.confirm.passkey");
                         });
 
 Then run `art migrate` (after auth's migration: the table references users). Ceremony state is kept in
@@ -106,6 +108,8 @@ On the login page:            import { signIn } from '../../passkeys'
                               <button type="button" @click="signIn">Sign in with a passkey</button>
 On the two-factor challenge:  import { secondFactor } from '../../passkeys'
                               <button type="button" @click="secondFactor(form.trust)">Use a passkey</button>
+On the confirm-password page: import { confirmWithPasskey } from '../../passkeys'
+                              <button type="button" @click="confirmWithPasskey">Use a passkey</button>
 Link /settings/passkeys from your settings navigation. Browsers need `PublicKeyCredential.parseCreationOptionsFromJSON`
 (Chrome 129, Safari 18, Firefox 119)."""
 

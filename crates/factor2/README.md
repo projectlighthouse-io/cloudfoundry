@@ -23,8 +23,8 @@ let tf = TwoFactor::new(factor2::SqliteStore::new(pool), crypt, cookie_codec, "A
 // Settings
 let setup = tf.setup(user.id, &user.email).await?;      // secret, otpauth:// URI, QR code (SVG); unconfirmed
 let backup_codes = tf.confirm(user.id, &code).await?;    // on; show the 10 codes once
-tf.regenerate_backup_codes(user.id).await?;              // behind auth::PasswordConfirmed
-tf.disable(user.id).await?;                              // behind auth::PasswordConfirmed
+tf.regenerate_backup_codes(user.id).await?;              // behind auth::RecentlyConfirmed
+tf.disable(user.id).await?;                              // behind auth::RecentlyConfirmed
 
 // Login (the published `handlers::two_factor::login` replaces `handlers::login::login`)
 let user = auth.validate(&users, &email, &password).await?;          // password only, no login
@@ -53,7 +53,7 @@ auth.login(&users.find(passed.user_id).await?.unwrap());             // rotates 
   only the token's hash is stored, with the user agent and IP for the settings list. Revoking a device, or
   disabling two-factor, stops the cookie working.
 - With `.throttle(limiter)`, wrong codes count per user and IP; past the limit even a right code waits.
-- Disabling two-factor and regenerating codes are for `auth::PasswordConfirmed<User>` handlers (sudo mode).
+- Disabling two-factor and regenerating codes are for `auth::RecentlyConfirmed<User>` handlers (sudo mode).
 - Events for the app to emit (the stubs do): `TwoFactorEnabled`, `TwoFactorDisabled`,
   `TwoFactorChallengeFailed`, `BackupCodeUsed`.
 - No cascades: call `disable(user_id)` before deleting a user.

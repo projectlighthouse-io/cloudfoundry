@@ -17,7 +17,7 @@
 //! ```
 //!
 //! [`Passkeys`] does not log anyone in, and does not check sudo mode: the
-//! published handlers call `auth.login` and take `auth::PasswordConfirmed`.
+//! published handlers call `auth.login` and take `auth::RecentlyConfirmed`.
 //!
 //! Ceremony state is serialised into the session. The session must be stored
 //! server side (memory, SQL or Redis store): a client-side session would let
@@ -162,10 +162,10 @@ impl<A: throttle::Algorithm, St: throttle::Store> Limiter for throttle::Limiter<
         Box::pin(async move { Ok(Some(throttle::Limiter::check(self, key).await?).filter(|d| !d.allowed).map(|d| d.retry_after)) })
     }
     fn hit<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(async move { throttle::Limiter::hit(self, key).await.map(drop).map_err(Into::into) })
+        Box::pin(async move { throttle::Limiter::hit(self, key).await.map(drop) })
     }
     fn clear<'a>(&'a self, key: &'a str) -> BoxFuture<'a, Result<(), BoxError>> {
-        Box::pin(async move { throttle::Limiter::clear(self, key).await.map_err(Into::into) })
+        Box::pin(throttle::Limiter::clear(self, key))
     }
 }
 
@@ -267,10 +267,10 @@ impl<S: Store> Passkeys<S> {
     #[cfg_attr(not(feature = "event"), allow(clippy::unused_async))]
     async fn emit(&self, e: Emitted) {
         #[cfg(feature = "event")]
-        if let Some(emit) = &self.emit {
-            if let Err(err) = emit(e).await {
-                tracing::error!("passkeys event listener failed: {err}");
-            }
+        if let Some(emit) = &self.emit
+            && let Err(err) = emit(e).await
+        {
+            tracing::error!("passkeys event listener failed: {err}");
         }
         #[cfg(not(feature = "event"))]
         drop(e);
@@ -396,7 +396,7 @@ impl<S: Store> Passkeys<S> {
         self.store.rename(user, passkey, name.trim()).await
     }
 
-    /// Gate it behind `auth::PasswordConfirmed`. `false` if the user has no passkey with this id.
+    /// Gate it behind `auth::RecentlyConfirmed`. `false` if the user has no passkey with this id.
     pub async fn remove(&self, user: i64, passkey: Uuid<Passkey>) -> Result<bool, Error> {
         let removed = self.store.delete(user, passkey).await?;
         if removed {

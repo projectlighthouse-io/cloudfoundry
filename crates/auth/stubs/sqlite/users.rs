@@ -23,6 +23,9 @@ pub struct User {
     pub password_hash: Option<String>,
     #[serde(skip)]
     pub remember_token: Option<String>,
+    /// Unix seconds; `None` until the address is verified (`auth::Verified<User>`).
+    #[ts(type = "number | null")]
+    pub email_verified_at: Option<i64>,
 }
 
 /// An API token as its owner sees it, for token management: named by
@@ -37,12 +40,20 @@ pub struct ApiToken {
     pub expires_at: Option<i64>,
 }
 
+/// Where sessions live, for "Browsers & devices" (`session::Devices`).
+pub type Sessions = session::SqliteStore;
+
 #[derive(Clone)]
 pub struct UserStore {
     pub db: Db<Primary>,
 }
 
 impl UserStore {
+    /// The sessions table, to list and end a user's sessions.
+    pub fn sessions(&self) -> Sessions {
+        Sessions::new(self.db.pool().clone())
+    }
+
     /// The user's API tokens, oldest first.
     pub async fn tokens(&self, user_id: i64) -> Result<Vec<ApiToken>, sqlx::Error> {
         sqlx::query_as("select uuid, name, expires_at from api_tokens where user_id = ? order by id")
@@ -75,14 +86,14 @@ impl UserStore {
 
     /// The user a URL names, e.g. `/teams/{team}/members/{user}`.
     pub async fn by_uuid(&self, uuid: Uuid<User>) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where uuid = ?")
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token, email_verified_at from users where uuid = ?")
             .bind(uuid)
             .fetch_optional(self.db.pool())
             .await
     }
 
     pub async fn by_email(&self, email: &str) -> Result<Option<User>, sqlx::Error> {
-        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where email = ?")
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token, email_verified_at from users where email = ?")
             .bind(email)
             .fetch_optional(self.db.pool())
             .await
@@ -94,7 +105,7 @@ impl auth::Provider for UserStore {
     type Id = i64;
 
     async fn find(&self, id: i64) -> Result<Option<User>, auth::Error> {
-        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token from users where id = ?")
+        sqlx::query_as("select id, uuid, name, email, password_hash, remember_token, email_verified_at from users where id = ?")
             .bind(id)
             .fetch_optional(self.db.pool())
             .await
@@ -197,5 +208,62 @@ impl auth::Resets for UserStore {
     async fn delete_reset(&self, id: i64) -> Result<(), auth::Error> {
         sqlx::query("delete from password_resets where user_id = ?").bind(id).execute(self.db.pool()).await?;
         Ok(())
+    }
+}
+
+/// Email verification, also for changing the address: `auth::verification_token` /
+/// `auth.verify_email`; `.verification()` on the auth layer for `auth::Verified<User>`.
+impl auth::Verifications for UserStore {
+    fn email(&self, user: &User) -> String {
+        user.email.clone()
+    }
+
+    fn email_verified_at(&self, user: &User) -> Option<i64> {
+        user.email_verified_at
+    }
+
+    async fn store_verification(&self, link: auth::NewVerification<i64>) -> Result<(), auth::Error> {
+        let mut tx = self.db.pool().begin().await?;
+        // One open link per user: a new one replaces any older one.
+        sqlx::query("delete from email_verifications where user_id = ? and verified_at is null").bind(link.user).execute(&mut *tx).await?;
+        sqlx::query("insert into email_verifications (user_id, email, token_hash, expires_at, created_at) values (?, ?, ?, ?, ?)")
+            .bind(link.user)
+            .bind(link.email)
+            .bind(link.token_hash)
+            .bind(link.expires_at)
+            .bind(link.created_at)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn last_verification_at(&self, id: i64) -> Result<Option<i64>, auth::Error> {
+        let (at,): (Option<i64>,) = sqlx::query_as("select max(created_at) from email_verifications where user_id = ?").bind(id).fetch_one(self.db.pool()).await?;
+        Ok(at)
+    }
+
+    async fn verification_by_token(&self, hash: &[u8]) -> Result<Option<auth::Verification<i64>>, auth::Error> {
+        let row: Option<(i64, i64, String, i64, Option<i64>)> =
+            sqlx::query_as("select id, user_id, email, expires_at, verified_at from email_verifications where token_hash = ?")
+                .bind(hash)
+                .fetch_optional(self.db.pool())
+                .await?;
+        Ok(row.map(|(id, user, email, expires_at, verified_at)| auth::Verification { id, user, email, expires_at, verified_at }))
+    }
+
+    async fn complete_verification(&self, link: i64, user: i64, email: &str, now: i64) -> Result<bool, auth::Error> {
+        let mut tx = self.db.pool().begin().await?;
+        let used = sqlx::query("update email_verifications set verified_at = ? where id = ? and verified_at is null")
+            .bind(now)
+            .bind(link)
+            .execute(&mut *tx)
+            .await?;
+        if used.rows_affected() == 0 {
+            return Ok(false);
+        }
+        sqlx::query("update users set email = ?, email_verified_at = ? where id = ?").bind(email).bind(now).bind(user).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(true)
     }
 }

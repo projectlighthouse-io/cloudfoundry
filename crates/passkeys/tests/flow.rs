@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test helpers
+// `.into()` for the user handle: its type depends on webauthn-rs features unified in the workspace.
+#![allow(clippy::useless_conversion)]
 //! Real ceremonies against webauthn-rs' software authenticator (`SoftPasskey`).
 
 use passkeys::{Error, MemoryStore, Passkeys, RequestChallengeResponse};
@@ -140,9 +142,18 @@ async fn emits_events() {
     type Log = Arc<Mutex<Vec<String>>>;
     let log: Log = Arc::default();
     let events = event::Events::<Log>::builder()
-        .on(|log: Log, e: PasskeyAdded| async move { Ok(log.lock().unwrap().push(format!("added {} {}", e.user_id, e.name))) })
-        .on(|log: Log, e: PasskeyUsed| async move { Ok(log.lock().unwrap().push(format!("used {} {}", e.user_id, e.passwordless))) })
-        .on(|log: Log, e: PasskeyRemoved| async move { Ok(log.lock().unwrap().push(format!("removed {}", e.user_id))) })
+        .on(|log: Log, e: PasskeyAdded| async move {
+            log.lock().unwrap().push(format!("added {} {}", e.user_id, e.name));
+            Ok(())
+        })
+        .on(|log: Log, e: PasskeyUsed| async move {
+            log.lock().unwrap().push(format!("used {} {}", e.user_id, e.passwordless));
+            Ok(())
+        })
+        .on(|log: Log, e: PasskeyRemoved| async move {
+            log.lock().unwrap().push(format!("removed {}", e.user_id));
+            Ok(())
+        })
         .build();
     let pk = passkeys().events(Arc::new(events), log.clone());
 

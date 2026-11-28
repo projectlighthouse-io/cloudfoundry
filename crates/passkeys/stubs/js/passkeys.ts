@@ -59,3 +59,13 @@ export async function secondFactor(trust = false) {
     if (!cancelled(e)) throw e
   }
 }
+
+/** Sudo mode: confirm it is you with a passkey (e.g. on the confirm-password page). */
+export async function confirmWithPasskey() {
+  try {
+    const credential = await get('/settings/confirm-passkey/options')
+    if (credential) router.post('/settings/confirm-passkey', { credential: credential.toJSON() })
+  } catch (e) {
+    if (!cancelled(e)) throw e
+  }
+}

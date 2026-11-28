@@ -1,7 +1,9 @@
 //! Published by `art publish auth --with-ui`. App code: change it freely.
 //!
-//! Sudo mode: pages whose handlers take `auth::PasswordConfirmed<User>` send
-//! the user here first, then back to where they were going.
+//! Sudo mode: pages whose handlers take `auth::RecentlyConfirmed<User>` send
+//! the user here first, then back to where they were going. Accounts without
+//! a password (social login) confirm with a passkey (`art publish passkeys`)
+//! or by logging in with their provider again; both call `auth.mark_confirmed()`.
 
 use auth::{Auth, Authed, ChangeError};
 use route::{Body, Cx, IntoResponse, Json, Redirect, http::{Response, StatusCode}};
@@ -16,10 +18,12 @@ use crate::{requests::password_confirm::ConfirmPassword, state::App, users::{Use
 #[ts(export)]
 pub struct ConfirmPasswordPage {
     email: String,
+    /// `false` for social-only accounts: offer a passkey or the provider instead.
+    has_password: bool,
 }
 
 pub async fn show(user: Authed<User>) -> inertia::Page<ConfirmPasswordPage> {
-    inertia::render("auth/confirm-password", ConfirmPasswordPage { email: user.email.clone() })
+    inertia::render("auth/confirm-password", ConfirmPasswordPage { email: user.email.clone(), has_password: user.password_hash.is_some() })
 }
 
 /// Confirmed for `auth::Config::password_timeout`; back to the intended page.

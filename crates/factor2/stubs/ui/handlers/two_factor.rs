@@ -4,7 +4,7 @@
 //! password it logs in, or (two-factor on, browser not trusted) sends the
 //! user to the challenge page.
 
-use auth::{AttemptError, Auth, Authed, PasswordConfirmed, Provider};
+use auth::{AttemptError, Auth, Authed, RecentlyConfirmed, Provider};
 use factor2::{ChallengeError, Code, Device, Setup, Status, TrustedDevice, Uuid, events};
 use route::{
     Body, ClientAddr, Cx, IntoResponse, Json, Path, Redirect,
@@ -163,7 +163,7 @@ pub async fn confirm(cx: Cx<App>, user: Authed<User>, session: Session, input: V
 }
 
 /// Needs a recent password confirmation: the user is sent to confirm it first.
-pub async fn disable(cx: Cx<App>, user: PasswordConfirmed<User>) -> Result<Response<Body>> {
+pub async fn disable(cx: Cx<App>, user: RecentlyConfirmed<User>) -> Result<Response<Body>> {
     let tf = two_factor(&cx);
     tf.disable(user.id).await.map_err(failed)?;
     emit(&cx, events::TwoFactorDisabled { user_id: user.id }).await;
@@ -171,7 +171,7 @@ pub async fn disable(cx: Cx<App>, user: PasswordConfirmed<User>) -> Result<Respo
 }
 
 /// New backup codes; the old ones stop working. Needs a recent password confirmation.
-pub async fn regenerate(cx: Cx<App>, user: PasswordConfirmed<User>, session: Session) -> Result<Redirect> {
+pub async fn regenerate(cx: Cx<App>, user: RecentlyConfirmed<User>, session: Session) -> Result<Redirect> {
     let codes = two_factor(&cx).regenerate_backup_codes(user.id).await.map_err(failed)?;
     if let Err(e) = session.flash(CODES, &codes) {
         tracing::error!("flashing backup codes: {e}");

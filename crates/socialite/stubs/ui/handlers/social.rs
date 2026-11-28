@@ -28,6 +28,14 @@ pub async fn callback(cx: Cx<App>, auth: Auth<User>, session: Session, social: S
     let users = UserStore { db: cx.db.clone() };
     match users.find_or_create_social(&social, auth.user()).await {
         Ok(user) => {
+            // Already logged in as this user: a fresh provider login proves it is them
+            // (sudo mode, for accounts without a password). Back to the page that asked.
+            if auth.user().is_some_and(|u| u.id == user.id) {
+                if let Err(e) = auth.mark_confirmed() {
+                    tracing::error!("social login: confirming: {e}");
+                }
+                return Redirect::to(auth.intended("/"));
+            }
             auth.login(&user);
             Redirect::to_route("home")
         }
