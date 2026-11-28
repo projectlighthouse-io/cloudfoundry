@@ -9,7 +9,8 @@ Docs (also as Markdown for agents): https://toolkit.projectlighthouse.io/llms.tx
 ## Rules
 
 - Each crate stands alone and is usable as a git dependency: `route = { git = "https://github.com/projectlighthouse-io/toolkit" }`. No crates.io.
-- Crates don't depend on each other unless they must; an integration is a Cargo feature on one side (e.g. `route/command` needs only `clap`). `art` depends on none of the crates.
+- Crates don't depend on each other unless they must; an integration is a Cargo feature on one side (e.g. `route/command` needs only `clap`). `art` depends on none of the crates. The one shared dependency is `configured` (no default features), behind each crate's `configured` feature.
+- No crate reads env vars or files. Settings with defaults go in a `pub struct Config` (derives through `configured::serde`, `default` + `deny_unknown_fields`, durations via `configured::duration`), applied with `.config(cfg)`, which returns `Result` when a value can be invalid and never panics. Required values (stores, codecs, keys, URLs) stay constructor params; builders take `&str`, `Config` fields are `String`.
 - Modules (`auth`, `socialite`, ...) ship app-owned code as stubs under `stubs/`, declared in `[package.metadata.art.publish]`; `art publish` copies them. The crate never calls them.
 - Every database feature supports SQLite, Postgres and MySQL; build and test them in that order.
 - Library crates log through `tracing`, never `eprintln!` (CLI output excepted).
@@ -40,6 +41,7 @@ Smoke-test `art new` and `art publish` output by scaffolding outside the workspa
 - `validate`: `Valid<T>` only via `Valid::check`; rules are `Rule<T>` values, attached by `#[derive(Validate)]` (crate `validate-derive`, default feature `derive`); with feature `route`, `Errors` is a `422` response.
 - `teams`: roles are app enums, each permission an app type with a `Grants` impl; `Can<P, R>` / `OrgCan<P, O>` read `{team}` / `{org}` (404 for non-members, 403 without `P`). `teams::layer` goes after `auth::layer`; rules live in `Teams`, stores only keep data. `CurrentTeam` is `users.current_team_id` (the teams migration alters the app's users table, no FK) cached in the session, falling back to the first team and storing it. `Teams::require_team(name)` creates a personal team on first `CurrentTeam` and makes leaving the last team `Error::LastTeam`. Invitation tokens are stored hashed: a link can be shown only right after `invite` / `resend_*`.
 - `art make:*` writes one file and appends one `pub mod` line; `art new` templates go through `.replace("{name}", ..)`, including the frontend files in `art/templates/` (stylesheet, layouts, components; `include_str!`). Published `--with-ui` pages import them, and a test checks every relative import in the scaffold resolves. Keep `crates/*/stubs/pages` in step with the starter app's pages.
+- `configured::load::<T>("config")` (app only) reads `.env`, `config/default.*`, `config/<APP_ENV>.*`, resolves `env(X[, default])`, `required_env(X)`, `secret_env(X)`, `required_secret_env(X)`, reports every problem at once and masks secrets in `Loaded::show()` and errors. Secret fields are `configured::SecretString`.
 - Known rustc HRTB `Send` issue: a generic service projection naming `Request<route::Body>` fails `Send`; make layers generic over the request body.
 
 ## Commits

@@ -144,7 +144,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "auth"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "csrf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "db"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "configured",
  "serde",
@@ -1127,7 +1127,7 @@ dependencies = [
 
 [[package]]
 name = "inertia"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bytes",
  "configured",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "queue"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "action",
  "clap",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "route"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "action",
  "bytes",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "session"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "clap",

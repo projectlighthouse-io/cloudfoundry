@@ -1,6 +1,6 @@
 [package]
 name = "auth"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Know who the current user is, and guard routes"
@@ -93,7 +93,7 @@ agents = """
 - Users: `src/users.rs` implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
 - Guard routes with `auth::require::<User>()` in a route group; take `Authed<User>` in handlers that need a user, `Auth<User>` when it is optional.
-- `auth::layer(...)` goes after the session and CSRF layers in `src/main.rs`.
+- `auth::layer(...)` goes after the session and CSRF layers in `src/main.rs`. Login route and remember cookie settings: `[auth]` in config (`auth::Config`, `.config(cfg.auth)?`).
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/auth.md"""
 notes = """
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:

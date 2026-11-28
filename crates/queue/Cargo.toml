@@ -1,6 +1,6 @@
 [package]
 name = "queue"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Persist, claim, run and retry jobs"
@@ -49,6 +49,7 @@ toml = "0.9"
 [package.metadata.art]
 agents = """
 - Jobs live in `src/jobs/` (`art make:job <name>`) and are registered in `src/jobs/mod.rs`; run workers with `queue:work`.
+- Worker queues, concurrency and visibility: `[queue]` in config (`queue::WorkerConfig`, `worker.config(cfg.queue)?`).
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/queue.md"""
 notes = "Run `art migrate` to create the jobs and failed_jobs tables."
 

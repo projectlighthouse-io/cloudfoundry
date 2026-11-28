@@ -1,6 +1,6 @@
 [package]
 name = "session"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.85"
 description = "Load and save session data for a request"
@@ -62,6 +62,7 @@ toml = "0.9"
 [package.metadata.art]
 agents = """
 - `session::layer(store, codec)` must be the first layer in `src/main.rs`; CSRF and auth read the session it adds.
+- Cookie settings come from `[session]` in `config/default.toml` (`session::Config`, feature `configured`), applied with `.config(cfg.session)?`.
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/session.md"""
 notes = "Run `art migrate` to create the sessions table."
 
