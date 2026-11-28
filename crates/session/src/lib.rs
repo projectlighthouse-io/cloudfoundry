@@ -25,6 +25,8 @@ pub use layer::{SameSite, SessionLayer, layer};
 pub use store::MysqlStore;
 #[cfg(feature = "postgres")]
 pub use store::PostgresStore;
+#[cfg(feature = "redis")]
+pub use store::RedisStore;
 #[cfg(feature = "sqlite")]
 pub use store::SqliteStore;
 pub use store::{MemoryStore, Prune, Record, Store};

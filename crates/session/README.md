@@ -22,13 +22,15 @@ async fn count(s: session::Session) -> String {
 
 Lazy: an untouched session writes nothing and sets no cookie. Flash data lives one
 request. `regenerate()` on login, `invalidate()` on logout. Tables: `art publish
-session [--driver sqlite|mysql]`.
+session [--driver sqlite|mysql]`. `MemoryStore` and SQLite are single-server; run several
+instances on Postgres, MySQL or Redis.
 
 ## Features
 
 | Feature | Adds |
 | --- | --- |
 | `postgres`, `mysql`, `sqlite` | `PostgresStore`, `MysqlStore`, `SqliteStore` (`MemoryStore` always) |
+| `redis` | `RedisStore` (Redis or Valkey; keys expire on their own, no table). Every app instance pointed at the same server shares sessions |
 | `route` | `Session` as a handler input |
 | `csrf` | `Session` implements `csrf::TokenStore` |
 | `command` | `session::command::prune` for `session:prune` |

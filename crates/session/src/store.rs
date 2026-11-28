@@ -137,3 +137,73 @@ sql_store!(
     delete: "delete from sessions where id = ?",
     prune: "delete from sessions where expires_at <= ?"
 );
+
+/// Sessions in Redis or Valkey. Each session is one key that Redis expires
+/// itself, so `prune` has nothing to do. Shared by every app instance that
+/// points at the same server.
+///
+/// ```ignore
+/// let client = redis::Client::open("redis://127.0.0.1/")?;
+/// let store = session::RedisStore::new(client.get_connection_manager().await?).prefix("app:session:");
+/// ```
+#[cfg(feature = "redis")]
+#[derive(Clone)]
+pub struct RedisStore {
+    conn: redis::aio::ConnectionManager,
+    prefix: String,
+}
+
+#[cfg(feature = "redis")]
+impl RedisStore {
+    pub fn new(conn: redis::aio::ConnectionManager) -> Self {
+        Self { conn, prefix: "session:".into() }
+    }
+
+    /// Key prefix, `session:` by default. Give each app its own when they
+    /// share a server.
+    pub fn prefix(mut self, prefix: impl Into<String>) -> Self {
+        self.prefix = prefix.into();
+        self
+    }
+
+    fn key(&self, id: &SessionId) -> String {
+        format!("{}{}", self.prefix, id.as_str())
+    }
+}
+
+// The value is the expiry (8 bytes, big endian) followed by the data, so
+// `load` returns `expires_at` without a second command.
+#[cfg(feature = "redis")]
+impl Store for RedisStore {
+    async fn load(&self, id: &SessionId) -> Result<Option<Record>, Error> {
+        let value: Option<Vec<u8>> = redis::cmd("GET").arg(self.key(id)).query_async(&mut self.conn.clone()).await?;
+        Ok(value.and_then(|v| {
+            let (head, data) = v.split_at_checked(8)?;
+            let expires_at = i64::from_be_bytes(head.try_into().ok()?);
+            Some(Record { id: id.clone(), data: data.to_vec(), expires_at })
+        }))
+    }
+
+    async fn save(&self, r: &Record) -> Result<(), Error> {
+        if r.expires_at <= crate::unix_now() {
+            return self.delete(&r.id).await;
+        }
+        let mut value = r.expires_at.to_be_bytes().to_vec();
+        value.extend_from_slice(&r.data);
+        let () = redis::cmd("SET").arg(self.key(&r.id)).arg(value).arg("EXAT").arg(r.expires_at).query_async(&mut self.conn.clone()).await?;
+        Ok(())
+    }
+
+    async fn delete(&self, id: &SessionId) -> Result<(), Error> {
+        let _: i64 = redis::cmd("DEL").arg(self.key(id)).query_async(&mut self.conn.clone()).await?;
+        Ok(())
+    }
+}
+
+#[cfg(feature = "redis")]
+impl Prune for RedisStore {
+    /// Redis expires keys itself.
+    async fn prune(&self) -> Result<u64, Error> {
+        Ok(0)
+    }
+}

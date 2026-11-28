@@ -19,12 +19,15 @@ clap = { version = "4", features = ["derive"], optional = true }
 csrf = { path = "../csrf", optional = true }
 route = { path = "../route", optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"], optional = true }
+redis = { version = "1.2", default-features = false, features = ["tokio-comp", "connection-manager"], optional = true }
 
 [features]
 # SQL stores. Publish the table with `art publish session [--driver sqlite|mysql]`.
 postgres = ["dep:sqlx", "sqlx/postgres"]
 sqlite = ["dep:sqlx", "sqlx/sqlite"]
 mysql = ["dep:sqlx", "sqlx/mysql"]
+# Sessions in Redis or Valkey: no table, keys expire on their own.
+redis = ["dep:redis"]
 # `Session` as a handler input.
 route = ["dep:route"]
 # `Session` implements `csrf::TokenStore`.
