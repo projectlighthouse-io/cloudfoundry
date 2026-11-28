@@ -1,4 +1,4 @@
-# foundry
+# toolbox
 
 Small, independent Rust crates for server-driven web apps (Inertia + Vue), and
 `art`, a CLI to scaffold and run them. Laravel is the reference for developer
