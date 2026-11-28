@@ -191,6 +191,9 @@ a.who:hover .name { text-decoration: underline; text-decoration-color: var(--lin
 .flash { margin: 0; padding: 12px var(--inset); border-bottom: 1px solid var(--line); background: var(--danger-soft); font-size: 14px; color: var(--danger) }
 .flash-ok { background: var(--accent-soft); color: var(--acc-text) }
 .tail { flex: 1; min-height: 64px }
+/* A page that ends on a setting row: its column line runs on down to the footer (1fr : 1.25fr). */
+section:has(> .setting:last-child) + .tail { position: relative }
+section:has(> .setting:last-child) + .tail::before { content: ""; position: absolute; top: 0; bottom: 0; left: calc(100% / 2.25); width: 1px; background: var(--line) }
 
 /* ---------- footer ---------- */
 .foot { background: var(--black); color: #d9dad6 }
@@ -211,6 +214,7 @@ a.who:hover .name { text-decoration: underline; text-decoration-color: var(--lin
   .phead-act .btn { flex: 1 }
   .setting { grid-template-columns: 1fr }
   .setting > div + div { border-left: 0; padding-top: 0 }
+  section:has(> .setting:last-child) + .tail::before { display: none }
   .role { min-width: 0 }
   .who { min-width: 0; flex-basis: 160px }
 }
