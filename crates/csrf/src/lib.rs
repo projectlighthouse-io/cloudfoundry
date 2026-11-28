@@ -34,6 +34,31 @@ pub trait TokenStore {
 const COOKIE: &str = "XSRF-TOKEN";
 const HEADERS: [&str; 2] = ["x-xsrf-token", "x-csrf-token"];
 
+/// Layer settings. Deserializable with feature `configured`; missing keys keep
+/// their defaults, unknown keys are an error:
+///
+/// ```toml
+/// [csrf]
+/// secure = true
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "configured",
+    derive(configured::serde::Deserialize, configured::serde::Serialize),
+    serde(crate = "configured::serde", default, deny_unknown_fields)
+)]
+pub struct Config {
+    /// `Secure` on the `XSRF-TOKEN` cookie. Browsers treat `localhost` as
+    /// secure, so `true` works in local dev too.
+    pub secure: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { secure: true }
+    }
+}
+
 pub struct CsrfLayer<T> {
     except: Arc<Vec<String>>,
     secure: bool,
@@ -42,10 +67,16 @@ pub struct CsrfLayer<T> {
 
 /// The CSRF layer, reading tokens from the `T` in request extensions.
 pub fn layer<T>() -> CsrfLayer<T> {
-    CsrfLayer { except: Arc::new(vec![]), secure: true, _store: PhantomData }
+    CsrfLayer { except: Arc::new(vec![]), secure: Config::default().secure, _store: PhantomData }
 }
 
 impl<T> CsrfLayer<T> {
+    /// Replace all settings. Route exemptions are code: see `except`.
+    pub fn config(mut self, cfg: Config) -> Self {
+        self.secure = cfg.secure;
+        self
+    }
+
     /// Skip routes by name, e.g. incoming webhooks that authenticate otherwise.
     #[cfg(feature = "route")]
     pub fn except<N: route::Name>(mut self, names: impl IntoIterator<Item = N>) -> Self {

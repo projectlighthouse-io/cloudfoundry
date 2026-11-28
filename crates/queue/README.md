@@ -28,10 +28,24 @@ At-least-once delivery: jobs must be idempotent. A heartbeat extends a running
 job's hold, so long jobs are not claimed twice. Retries with backoff, then
 `failed_jobs`. Tables: `art publish queue [--driver sqlite|mysql]`. See `examples/worker.rs`.
 
+## Config
+
+`worker.config(cfg)?` sets queues, concurrency, visibility and poll interval, and returns
+`Err(ConfigError)` for no queues, zero concurrency, visibility under 1s (SQL stores keep whole
+seconds) or a zero poll.
+
+```toml
+[queue]
+queues = ["high", "default"]
+concurrency = 8
+visibility = "10m"
+```
+
 ## Features
 
 | Feature | Adds |
 | --- | --- |
 | `postgres`, `mysql`, `sqlite` | SQL stores (`MemoryStore` always) |
 | `command` | `queue::command::{work, retry}` |
+| `configured` | `queue::WorkerConfig` deserializes (durations as `"5m"`) |
 | `action` | `ActionJob`: `queue.push_action::<A>(input)`, `worker.register_action(\|app\| A { .. })` |

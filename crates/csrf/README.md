@@ -22,3 +22,4 @@ Constant-time comparison.
 | Feature | Adds |
 | --- | --- |
 | `route` | `except([...])`: exempt routes by name |
+| `configured` | `csrf::Config` deserializes (`[csrf] secure = false`); pass it with `.config(cfg)` |

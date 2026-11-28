@@ -1,0 +1,26 @@
+[package]
+name = "configured"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Load typed app config from files, with env vars and secrets resolved"
+
+[dependencies]
+humantime-serde = "1"
+secrecy = { version = "0.10", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+
+config = { version = "0.15", default-features = false, features = ["toml", "json", "yaml"], optional = true }
+dotenvy = { version = "0.15", optional = true }
+
+[features]
+default = ["load"]
+# `configured::load`: read config files with config-rs and resolve `env(...)`.
+# Crates that only expose a `Config` use `default-features = false`.
+load = ["dep:config", "dep:dotenvy"]
+
+[dev-dependencies]
+toml = "0.9"
+
+[lints]
+workspace = true

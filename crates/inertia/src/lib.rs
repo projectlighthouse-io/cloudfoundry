@@ -25,7 +25,7 @@ mod layer;
 #[cfg(feature = "ssr")]
 mod ssr;
 
-pub use layer::{InertiaLayer, InertiaService, layer};
+pub use layer::{Config, ConfigError, InertiaLayer, InertiaService, layer};
 
 use std::{borrow::Cow, future::Future, sync::Arc};
 

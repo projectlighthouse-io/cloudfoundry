@@ -48,3 +48,13 @@ the new hash, gives the session a new id and clears the "remember me" token.
 `art publish auth [--driver sqlite|mysql] [--with-ui]` copies login, registration, password reset and password change handlers
 (JSON by default; Inertia handlers and Vue pages with `--with-ui`), the
 `users`/`api_tokens`/`password_resets` migration and a `Provider` into the app, to own and edit.
+
+Config: `.config(cfg)?` sets the login route, `Secure`, the remember cookie name and its
+lifetime (at most 400 days), and returns `Err(ConfigError)` for invalid values. With feature
+`configured`, `auth::Config` loads with the `configured` crate (missing keys keep defaults, unknown keys fail):
+
+```toml
+[auth]
+login_route = "login"
+remember_for = "30d"
+```

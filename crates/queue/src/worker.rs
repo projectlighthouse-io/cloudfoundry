@@ -14,6 +14,75 @@ struct Handler<C> {
     backoff: fn(u32) -> Duration,
 }
 
+/// Worker settings. Deserializable with feature `configured`; missing keys keep
+/// their defaults, unknown keys are an error:
+///
+/// ```toml
+/// [queue]
+/// queues = ["high", "default"]
+/// concurrency = 8
+/// visibility = "10m"
+/// poll = "500ms"
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "configured",
+    derive(configured::serde::Deserialize, configured::serde::Serialize),
+    serde(crate = "configured::serde", default, deny_unknown_fields)
+)]
+pub struct WorkerConfig {
+    pub queues: Vec<String>,
+    /// Jobs run at once.
+    pub concurrency: usize,
+    /// How long a claimed job is held without a heartbeat. SQL stores keep
+    /// whole seconds, so it must be at least one second.
+    #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
+    pub visibility: Duration,
+    /// Idle wait between claims when the queues are empty.
+    #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
+    pub poll: Duration,
+}
+
+/// Queue `default`, 4 at a time, 5 minute visibility, poll every second.
+impl Default for WorkerConfig {
+    fn default() -> Self {
+        Self { queues: vec!["default".into()], concurrency: 4, visibility: Duration::from_secs(300), poll: Duration::from_secs(1) }
+    }
+}
+
+/// A [`WorkerConfig`] that would run no jobs, run jobs twice, or spin.
+#[derive(Debug)]
+pub struct ConfigError(String);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "queue config: {}", self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl WorkerConfig {
+    /// Run by [`Worker::config`].
+    pub fn check(&self) -> Result<(), ConfigError> {
+        let err = |m: &str| Err(ConfigError(m.into()));
+        if self.queues.is_empty() || self.queues.iter().any(String::is_empty) {
+            return err("queues must name at least one queue, none empty");
+        }
+        if self.concurrency == 0 {
+            return err("concurrency must be at least 1");
+        }
+        // Below a second, SQL stores would store 0 and hand running jobs to other workers.
+        if self.visibility < Duration::from_secs(1) {
+            return err("visibility must be at least 1s");
+        }
+        if self.poll.is_zero() {
+            return err("poll must be above zero; 0 busy-loops on an empty queue");
+        }
+        Ok(())
+    }
+}
+
 /// Claims and runs jobs. Built at startup with every job it can receive.
 pub struct Worker<St, C> {
     queue: Queue<St>,
@@ -26,17 +95,19 @@ pub struct Worker<St, C> {
 }
 
 impl<St: Store, C: Send + Sync + 'static> Worker<St, C> {
-    /// Defaults: queue `default`, 4 at a time, 5 minute visibility, poll every second.
+    /// With [`WorkerConfig::default`].
     pub fn new(queue: Queue<St>, cx: C) -> Self {
-        Self {
-            queue,
-            cx: Arc::new(cx),
-            handlers: HashMap::new(),
-            queues: vec!["default".into()],
-            concurrency: 4,
-            visibility: Duration::from_secs(300),
-            poll: Duration::from_secs(1),
-        }
+        let WorkerConfig { queues, concurrency, visibility, poll } = WorkerConfig::default();
+        Self { queue, cx: Arc::new(cx), handlers: HashMap::new(), queues, concurrency, visibility, poll }
+    }
+
+    /// Replace all settings after [`WorkerConfig::check`]. Setters called
+    /// after this change single fields.
+    pub fn config(mut self, cfg: WorkerConfig) -> Result<Self, ConfigError> {
+        cfg.check()?;
+        let WorkerConfig { queues, concurrency, visibility, poll } = cfg;
+        (self.queues, self.concurrency, self.visibility, self.poll) = (queues, concurrency, visibility, poll);
+        Ok(self)
     }
 
     pub fn register<J: Job<Context = C>>(self) -> Self {

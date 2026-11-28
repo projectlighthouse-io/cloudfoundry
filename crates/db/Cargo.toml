@@ -6,7 +6,9 @@ rust-version = "1.85"
 description = "Typed pool handles and explicit transactions over sqlx"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio"] }
+
 
 [features]
 postgres = ["sqlx/postgres"]
@@ -14,9 +16,13 @@ mysql = ["sqlx/mysql"]
 sqlite = ["sqlx/sqlite"]
 # `Db::<H>::set_singleton` and `Db::<H>::singleton`.
 singleton = []
+# `PoolConfig` deserializes through `configured` (durations as "2h", "14d").
+configured = ["dep:configured"]
 
 [dev-dependencies]
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+toml = "0.9"
 
 [lints]
 workspace = true

@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Know who the current user is, and guard routes"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 base64 = "0.22"
 getrandom = "0.3"
 password = { path = "../password" }
@@ -23,6 +24,8 @@ tracing = "0.1"
 [features]
 # `AuthLayer::throttle(limiter)`: limit failed login attempts.
 throttle = ["dep:throttle"]
+# `Config` deserializes through `configured` (durations as "2h", "14d").
+configured = ["dep:configured"]
 
 [dev-dependencies]
 argon2 = "0.5"
@@ -31,6 +34,7 @@ http-body-util = "0.1"
 securecookie = { path = "../securecookie" }
 throttle = { path = "../throttle" }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+toml = "0.9"
 
 [package.metadata.art.publish]
 "stubs/users.rs" = "src/users.rs"

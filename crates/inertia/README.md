@@ -28,9 +28,24 @@ HTML on first visits, JSON on Inertia visits, partial reloads, `Optional`/`Defer
 `Merge`/`Once` props, error bags, the asset version check (409) and 303s after
 PUT/PATCH/DELETE. `.pages_dir(dir)` catches a mistyped component in debug builds.
 
+## Config
+
+`.config(cfg)?` sets the root template, pages dir, history encryption and SSR, and returns
+`Err(ConfigError)` for an unreadable template, one without `{{ inertia }}`, a non-`http://`
+SSR URL, or `ssr_url` without feature `ssr`. Empty strings mean unset. Version, `head` and
+`share` stay methods.
+
+```toml
+[inertia]
+root_template = "resources/views/app.html"
+ssr_url = "http://127.0.0.1:13714"
+ssr_timeout = "2s"
+```
+
 ## Features
 
 | Feature | Adds |
 | --- | --- |
 | `validate` | On an Inertia visit, a validation failure redirects back with `props.errors` |
 | `ssr` | `.ssr("http://127.0.0.1:13714")`: render first visits on the Inertia SSR server, falling back to the client |
+| `configured` | `inertia::Config` deserializes (durations as `"2s"`) |

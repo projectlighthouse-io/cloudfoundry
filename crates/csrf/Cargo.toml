@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Issue and verify CSRF tokens"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 base64 = "0.22"
 bytes = "1"
 getrandom = "0.3"
@@ -21,10 +22,14 @@ route = { path = "../route", optional = true }
 [features]
 # `except([...])`: exempt routes by name.
 route = ["dep:route"]
+# `Config` deserializes through `configured` (durations as "2h", "14d").
+configured = ["dep:configured"]
 
 [dev-dependencies]
 route = { path = "../route" }
+serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt"] }
+toml = "0.9"
 
 [lints]
 workspace = true

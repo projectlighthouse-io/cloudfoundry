@@ -457,6 +457,11 @@ impl UrlFor {
     pub fn url(&self, name: impl Name, params: &[(&str, &str)]) -> Result<String, UrlError> {
         self.0.url(name.as_str(), params)
     }
+
+    /// [`UrlFor::url`] for a name known only at runtime, e.g. read from config.
+    pub fn url_by_name(&self, name: &str, params: &[(&str, &str)]) -> Result<String, UrlError> {
+        self.0.url(name, params)
+    }
 }
 
 /// A built, immutable router. Cheap to clone. Lookup takes no lock.

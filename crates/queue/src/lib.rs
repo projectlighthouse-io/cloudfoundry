@@ -42,7 +42,7 @@ pub use mysql::MysqlStore;
 pub use postgres::PostgresStore;
 #[cfg(feature = "sqlite")]
 pub use sqlite::SqliteStore;
-pub use worker::{BoxFuture, Worker, shutdown_signal};
+pub use worker::{BoxFuture, ConfigError, Worker, WorkerConfig, shutdown_signal};
 
 use std::{fmt, future::Future, sync::Arc, time::Duration};
 

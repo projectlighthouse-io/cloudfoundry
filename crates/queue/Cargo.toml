@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Persist, claim, run and retry jobs"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 action = { path = "../action", optional = true }
 serde = "1"
 serde_json = "1"
@@ -24,11 +25,14 @@ mysql = ["dep:sqlx", "sqlx/mysql"]
 action = ["dep:action"]
 # `queue::command::{work, retry}` for the `command` crate.
 command = ["dep:clap"]
+# `WorkerConfig` deserializes through `configured` (durations as "2h", "14d").
+configured = ["dep:configured"]
 
 [dev-dependencies]
 action = { path = "../action" }
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt-multi-thread", "test-util"] }
+toml = "0.9"
 
 [package.metadata.art.publish]
 "stubs/migrations/create_jobs.up.sql" = "migrations/{timestamp}_create_jobs.up.sql"

@@ -327,12 +327,11 @@ impl<P: Tokens> ErasedTokens<P::User> for P {
 }
 
 /// Browsers cap cookie lifetimes at 400 days.
-const REMEMBER_FOR: Duration = Duration::from_secs(400 * 86400);
+const MAX_COOKIE_AGE: Duration = Duration::from_secs(400 * 86400);
 
 struct RememberCfg<U> {
     store: Arc<dyn ErasedRemember<U>>,
     codec: Arc<Codec>,
-    cookie: String,
 }
 
 /// Cookie work the layer does after the handler.
@@ -375,9 +374,69 @@ impl<U> Clone for AuthCx<U> {
     }
 }
 
-struct Config {
-    login_route: &'static str,
-    secure: bool,
+/// Layer settings. Deserializable with feature `configured`; missing keys keep
+/// their defaults, unknown keys are an error:
+///
+/// ```toml
+/// [auth]
+/// login_route = "login"
+/// secure = true
+/// remember_cookie = "remember"
+/// remember_for = "30d"
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "configured",
+    derive(configured::serde::Deserialize, configured::serde::Serialize),
+    serde(crate = "configured::serde", default, deny_unknown_fields)
+)]
+pub struct Config {
+    /// Route name anonymous page visits are sent to.
+    pub login_route: String,
+    /// `Secure` on the remember cookie. Browsers treat `localhost` as secure.
+    pub secure: bool,
+    /// Name of the remember cookie.
+    pub remember_cookie: String,
+    /// How long a remember cookie lasts. At most 400 days (the browser cap).
+    #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
+    pub remember_for: Duration,
+}
+
+/// `login`, `Secure`, cookie `remember`, 400 days.
+impl Default for Config {
+    fn default() -> Self {
+        Self { login_route: "login".into(), secure: true, remember_cookie: "remember".into(), remember_for: MAX_COOKIE_AGE }
+    }
+}
+
+/// A [`Config`] that would break login redirects or the remember cookie.
+#[derive(Debug)]
+pub struct ConfigError(String);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "auth config: {}", self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl Config {
+    /// Run by [`AuthLayer::config`].
+    pub fn check(&self) -> Result<(), ConfigError> {
+        let err = |m: String| Err(ConfigError(m));
+        if self.login_route.is_empty() {
+            return err("login_route is empty".into());
+        }
+        let token = |c: u8| c.is_ascii_graphic() && !b"()<>@,;:\\\"/[]?={}".contains(&c);
+        if self.remember_cookie.is_empty() || !self.remember_cookie.bytes().all(token) {
+            return err(format!("remember_cookie `{}` is not a valid cookie token", self.remember_cookie));
+        }
+        if self.remember_for.as_secs() == 0 || self.remember_for > MAX_COOKIE_AGE {
+            return err("remember_for must be between 1 second and 400 days".into());
+        }
+        Ok(())
+    }
 }
 
 impl<U> AuthCx<U> {
@@ -410,7 +469,7 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
     async fn recall(&self, session: &Session) -> Result<Option<U>, Error> {
         let (Some(r), Some(cookie)) = (&self.remember, &self.recaller) else { return Ok(None) };
         let mut found = None;
-        if let Ok((id, token)) = r.codec.verify::<(Value, String)>(&r.cookie, cookie, REMEMBER_FOR) {
+        if let Ok((id, token)) = r.codec.verify::<(Value, String)>(&self.cfg.remember_cookie, cookie, self.cfg.remember_for) {
             if let Some(user) = self.provider.find(id.clone()).await? {
                 if r.store.token_of(&user).is_some_and(|t| ct_eq(&t, &token)) {
                     found = Some((id, user));
@@ -437,8 +496,8 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
                 if let Err(e) = r.store.set(id.clone(), Some(token.clone())).await {
                     return tracing::error!("storing the remember token failed: {e}");
                 }
-                match r.codec.sign(&r.cookie, &(id, token)) {
-                    Ok(v) => set_cookie(res, &r.cookie, &v, REMEMBER_FOR.as_secs(), self.cfg.secure),
+                match r.codec.sign(&self.cfg.remember_cookie, &(id, token)) {
+                    Ok(v) => set_cookie(res, &self.cfg.remember_cookie, &v, self.cfg.remember_for.as_secs(), self.cfg.secure),
                     Err(e) => tracing::error!("signing the remember cookie failed: {e}"),
                 }
             }
@@ -448,7 +507,7 @@ impl<U: Clone + Send + Sync + 'static> AuthCx<U> {
                         tracing::error!("clearing the remember token failed: {e}");
                     }
                 }
-                set_cookie(res, &r.cookie, "", 0, self.cfg.secure);
+                set_cookie(res, &self.cfg.remember_cookie, "", 0, self.cfg.secure);
             }
         }
     }
@@ -511,13 +570,13 @@ async fn current<U: Clone + Send + Sync + 'static>(ext: &Extensions) -> Result<(
 }
 
 /// Redirect page visits to the login route; `401` for JSON clients.
-fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &'static str) -> Response<Body> {
+fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &str) -> Response<Body> {
     let inertia = headers.contains_key("x-inertia");
     let wants_json = headers
         .get(header::ACCEPT)
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("application/json"));
-    let url = ext.get::<UrlFor>().and_then(|u| u.url(login, &[]).ok());
+    let url = ext.get::<UrlFor>().and_then(|u| u.url_by_name(login, &[]).ok());
     match url {
         Some(url) if inertia || !wants_json => Redirect::to(url).into_response(),
         _ => StatusCode::UNAUTHORIZED.into_response(),
@@ -527,7 +586,7 @@ fn unauthenticated(ext: &Extensions, headers: &HeaderMap, login: &'static str) -
 /// Make `Auth<U>`, `Authed<U>`, `require` and `guest` work. Add after the
 /// session layer.
 pub fn layer<P: Provider>(provider: P) -> AuthLayer<P> {
-    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, throttle: None, cfg: Arc::new(Config { login_route: "login", secure: true }) }
+    AuthLayer { provider: Arc::new(provider), remember: None, tokens: None, throttle: None, cfg: Arc::new(Config::default()) }
 }
 
 pub struct AuthLayer<P: Provider> {
@@ -539,14 +598,24 @@ pub struct AuthLayer<P: Provider> {
 }
 
 impl<P: Provider> AuthLayer<P> {
+    /// Replace all settings after [`Config::check`]. Setters called after
+    /// this change single fields and are not checked.
+    pub fn config(mut self, cfg: Config) -> Result<Self, ConfigError> {
+        cfg.check()?;
+        self.cfg = Arc::new(cfg);
+        Ok(self)
+    }
+
     /// Route name anonymous page visits are sent to. Default `login`.
-    pub fn login_route(self, name: &'static str) -> Self {
-        Self { cfg: Arc::new(Config { login_route: name, secure: self.cfg.secure }), ..self }
+    pub fn login_route(mut self, name: &str) -> Self {
+        Arc::make_mut(&mut self.cfg).login_route = name.to_owned();
+        self
     }
 
     /// `Secure` on the remember cookie. Default `true` (browsers accept it on localhost).
-    pub fn secure(self, secure: bool) -> Self {
-        Self { cfg: Arc::new(Config { login_route: self.cfg.login_route, secure }), ..self }
+    pub fn secure(mut self, secure: bool) -> Self {
+        Arc::make_mut(&mut self.cfg).secure = secure;
+        self
     }
 }
 
@@ -562,12 +631,12 @@ impl<P: Credentials> AuthLayer<P> {
 }
 
 impl<P: Remember> AuthLayer<P> {
-    /// Enable "remember me": `Auth::login_remember` sets a signed, 400-day
-    /// cookie that logs the user back in after the session ends. Logout
+    /// Enable "remember me": `Auth::login_remember` sets a signed cookie
+    /// (`Config::remember_for`, default 400 days) that logs the user back in after the session ends. Logout
     /// clears the stored token, so old cookies stop working.
     pub fn remember(mut self, codec: Codec) -> Self {
         let store: Arc<dyn ErasedRemember<P::User>> = self.provider.clone();
-        self.remember = Some(Arc::new(RememberCfg { store, codec: Arc::new(codec), cookie: "remember".into() }));
+        self.remember = Some(Arc::new(RememberCfg { store, codec: Arc::new(codec) }));
         self
     }
 }
@@ -645,7 +714,7 @@ where
             cfg: l.cfg.clone(),
             user: Arc::new(OnceCell::new()),
             bearer: l.tokens.as_ref().and_then(|_| bearer(req.headers())).map(Into::into),
-            recaller: l.remember.as_ref().and_then(|r| cookie(req.headers(), &r.cookie)).map(Into::into),
+            recaller: l.remember.as_ref().and_then(|_| cookie(req.headers(), &l.cfg.remember_cookie)).map(Into::into),
             pending: Arc::default(),
         };
         req.extensions_mut().insert(cx.clone());
@@ -672,7 +741,7 @@ impl<S: Send + Sync, U: Clone + Send + Sync + 'static> FromRequestParts<S> for A
     async fn from_request_parts(parts: &mut Parts, _: &Arc<S>) -> Result<Self, Response<Body>> {
         match current::<U>(&parts.extensions).await? {
             (Some(user), ..) => Ok(Authed(user)),
-            (None, cx, _) => Err(unauthenticated(&parts.extensions, &parts.headers, cx.cfg.login_route)),
+            (None, cx, _) => Err(unauthenticated(&parts.extensions, &parts.headers, &cx.cfg.login_route)),
         }
     }
 }
@@ -923,7 +992,7 @@ where
                 Err(res) => return Ok(res),
             };
             match (kind, user.is_some()) {
-                (Kind::Require, false) => Ok(unauthenticated(req.extensions(), req.headers(), cx.cfg.login_route)),
+                (Kind::Require, false) => Ok(unauthenticated(req.extensions(), req.headers(), &cx.cfg.login_route)),
                 (Kind::Guest(home), true) => Ok(match req.extensions().get::<UrlFor>().and_then(|u| u.url(home, &[]).ok()) {
                     Some(url) => Redirect::to(url).into_response(),
                     None => StatusCode::FORBIDDEN.into_response(),

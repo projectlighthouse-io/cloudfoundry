@@ -20,7 +20,7 @@ mod store;
 #[cfg(feature = "command")]
 pub mod command;
 
-pub use layer::{SameSite, SessionLayer, layer};
+pub use layer::{Config, ConfigError, SameSite, SessionLayer, layer};
 #[cfg(feature = "mysql")]
 pub use store::MysqlStore;
 #[cfg(feature = "postgres")]

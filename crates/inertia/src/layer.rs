@@ -20,7 +20,7 @@ type Head = Arc<dyn Fn() -> String + Send + Sync>;
 type Share = Arc<dyn Fn(&Extensions) -> Result<Vec<u8>, serde_json::Error> + Send + Sync>;
 
 #[derive(Clone)]
-struct Config {
+struct State {
     encrypt_history: bool,
     #[cfg(feature = "ssr")]
     ssr: Option<Arc<crate::ssr::Ssr>>,
@@ -35,12 +35,12 @@ struct Config {
 /// sees the handler's response first.
 #[derive(Clone)]
 pub struct InertiaLayer {
-    cfg: Config,
+    cfg: State,
 }
 
 pub fn layer() -> InertiaLayer {
     InertiaLayer {
-        cfg: Config {
+        cfg: State {
             encrypt_history: false,
             #[cfg(feature = "ssr")]
             ssr: None,
@@ -55,15 +55,104 @@ const DEFAULT_ROOT: &str = r#"<!doctype html>
 <body>{{ inertia }}</body>
 </html>"#;
 
+/// Layer settings. Deserializable with feature `configured`; missing keys keep
+/// their defaults, unknown keys are an error. An empty string means unset,
+/// so `INERTIA_SSR_URL=` turns SSR off:
+///
+/// ```toml
+/// [inertia]
+/// root_template = "resources/views/app.html"
+/// pages_dir = "resources/js/pages"
+/// encrypt_history = false
+/// ssr_url = "http://127.0.0.1:13714"   # needs feature `ssr`
+/// ssr_timeout = "2s"
+/// ```
+///
+/// The asset version, `head` and `share` are code: set them with their methods.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "configured",
+    derive(configured::serde::Deserialize, configured::serde::Serialize),
+    serde(crate = "configured::serde", default, deny_unknown_fields)
+)]
+pub struct Config {
+    /// HTML shell for first visits; must contain `{{ inertia }}`. Unset: built-in shell.
+    pub root_template: Option<String>,
+    /// Debug builds check `<dir>/<component>.vue` exists before rendering.
+    pub pages_dir: Option<String>,
+    pub encrypt_history: bool,
+    /// Inertia SSR server. Needs feature `ssr`.
+    pub ssr_url: Option<String>,
+    /// Give up on SSR after this long and render on the client.
+    #[cfg_attr(feature = "configured", serde(with = "configured::duration"))]
+    pub ssr_timeout: std::time::Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { root_template: None, pages_dir: None, encrypt_history: false, ssr_url: None, ssr_timeout: std::time::Duration::from_secs(2) }
+    }
+}
+
+/// A [`Config`] the layer cannot honor: an unreadable root template, one
+/// without `{{ inertia }}`, a bad SSR URL, or SSR without feature `ssr`.
+#[derive(Debug)]
+pub struct ConfigError(String);
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "inertia config: {}", self.0)
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+fn read_root(path: &str) -> Result<Arc<str>, String> {
+    match std::fs::read_to_string(path) {
+        Ok(html) if html.contains("{{ inertia }}") => Ok(html.into()),
+        Ok(_) => Err(format!("root template {path} has no `{{{{ inertia }}}}`")),
+        Err(e) => Err(format!("root template {path}: {e}")),
+    }
+}
+
 impl InertiaLayer {
+    /// Apply every [`Config`] field, reading the root template now. Fails
+    /// instead of falling back, so a bad deploy config stops startup.
+    pub fn config(mut self, cfg: Config) -> Result<Self, ConfigError> {
+        let set = |o: Option<String>| o.filter(|s| !s.is_empty());
+        if cfg.ssr_timeout.is_zero() {
+            return Err(ConfigError("ssr_timeout must be above zero".into()));
+        }
+        self.cfg.root = match set(cfg.root_template) {
+            Some(path) => read_root(&path).map_err(ConfigError)?,
+            None => DEFAULT_ROOT.into(),
+        };
+        self.cfg.pages = set(cfg.pages_dir).map(|d| d.trim_end_matches('/').into());
+        self.cfg.encrypt_history = cfg.encrypt_history;
+        match set(cfg.ssr_url) {
+            #[cfg(feature = "ssr")]
+            Some(url) => {
+                let mut ssr = crate::ssr::Ssr::new(&url).map_err(|e| ConfigError(format!("ssr_url {url}: {e}")))?;
+                ssr.timeout = cfg.ssr_timeout;
+                self.cfg.ssr = Some(Arc::new(ssr));
+            }
+            #[cfg(not(feature = "ssr"))]
+            Some(url) => return Err(ConfigError(format!("ssr_url {url} is set but feature `ssr` is off"))),
+            #[cfg(feature = "ssr")]
+            None => self.cfg.ssr = None,
+            #[cfg(not(feature = "ssr"))]
+            None => {}
+        }
+        Ok(self)
+    }
+
     /// The HTML shell for first visits, read now. `{{ head }}` becomes the
     /// `head` output, `{{ inertia }}` the page. If the file cannot be read or
     /// has no `{{ inertia }}`, an error is logged and the built-in shell is used.
     pub fn root_template(mut self, path: &str) -> Self {
-        match std::fs::read_to_string(path) {
-            Ok(html) if html.contains("{{ inertia }}") => self.cfg.root = html.into(),
-            Ok(_) => tracing::error!("inertia root template {path} has no `{{{{ inertia }}}}`; using the built-in one"),
-            Err(e) => tracing::error!("inertia root template {path}: {e}; using the built-in one"),
+        match read_root(path) {
+            Ok(html) => self.cfg.root = html,
+            Err(e) => tracing::error!("inertia {e}; using the built-in one"),
         }
         self
     }
@@ -81,7 +170,13 @@ impl InertiaLayer {
     /// down, slow or failing.
     #[cfg(feature = "ssr")]
     pub fn ssr(mut self, url: &str) -> Self {
-        self.cfg.ssr = crate::ssr::Ssr::new(url).map(Arc::new);
+        self.cfg.ssr = match crate::ssr::Ssr::new(url) {
+            Ok(s) => Some(Arc::new(s)),
+            Err(e) => {
+                tracing::error!("inertia ssr url {url}: {e}; rendering on the client");
+                None
+            }
+        };
         self
     }
 
@@ -134,7 +229,7 @@ impl<S> Layer<S> for InertiaLayer {
 #[derive(Clone)]
 pub struct InertiaService<S> {
     inner: S,
-    cfg: Config,
+    cfg: State,
 }
 
 impl<S, ReqB> Service<Request<ReqB>> for InertiaService<S>
@@ -433,7 +528,7 @@ fn page_json(
     serde_json::to_vec(&page)
 }
 
-fn html(cfg: &Config, page: &[u8]) -> String {
+fn html(cfg: &State, page: &[u8]) -> String {
     // `<` escaped so the JSON cannot close the script element. No HTML entities:
     // browsers do not decode them inside <script>.
     let json = String::from_utf8_lossy(page).replace('<', "\\u003c");
@@ -442,7 +537,7 @@ fn html(cfg: &Config, page: &[u8]) -> String {
 }
 
 /// The root template with `{{ head }}` (asset tags, then `extra`) and `{{ inertia }}` filled.
-fn shell(cfg: &Config, extra: &str, app: &str) -> String {
+fn shell(cfg: &State, extra: &str, app: &str) -> String {
     let head = cfg.head.as_ref().map(|f| f()).unwrap_or_default() + extra;
     cfg.root.replace("{{ head }}", &head).replace("{{ inertia }}", app)
 }

@@ -6,6 +6,7 @@ rust-version = "1.85"
 description = "Speak the Inertia.js v3 protocol"
 
 [dependencies]
+configured = { path = "../configured", default-features = false, optional = true }
 route = { path = "../route" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
@@ -26,6 +27,8 @@ validate = { path = "../validate", optional = true }
 validate = ["dep:validate", "session"]
 # `inertia::clear_history(&session)`: clear the browser's history on the next page (logout).
 session = ["dep:session"]
+# `Config` deserializes through `configured` (durations as "2h", "14d").
+configured = ["dep:configured"]
 # Server-side rendering through the Inertia SSR server (`node bootstrap/ssr/ssr.js`).
 ssr = ["dep:bytes", "dep:http-body-util", "dep:hyper", "dep:hyper-util", "dep:tokio"]
 
@@ -35,6 +38,7 @@ http-body-util = "0.1"
 securecookie = { path = "../securecookie" }
 session = { path = "../session", features = ["route"] }
 tokio = { version = "1", features = ["macros", "rt", "net"] }
+toml = "0.9"
 validate = { path = "../validate", features = ["route"] }
 
 [lints]

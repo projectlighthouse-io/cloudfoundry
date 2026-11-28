@@ -27,17 +27,14 @@ struct Rendered {
 }
 
 impl Ssr {
-    /// `base` is the SSR server, e.g. `http://127.0.0.1:13714`.
-    /// `None` (with an error logged) when `base` is not a URL: pages then
-    /// render on the client, as they do whenever SSR fails.
-    pub(crate) fn new(base: &str) -> Option<Self> {
-        match format!("{}/render", base.trim_end_matches('/')).parse() {
-            Ok(render) => Some(Ssr { render, client: Client::builder(TokioExecutor::new()).build_http(), timeout: Duration::from_secs(2) }),
-            Err(e) => {
-                tracing::error!("inertia ssr url {base}: {e}; rendering on the client");
-                None
-            }
+    /// `base` is the SSR server, e.g. `http://127.0.0.1:13714`. Must be an
+    /// absolute `http` URL: the client speaks plain HTTP only.
+    pub(crate) fn new(base: &str) -> Result<Self, String> {
+        let render: Uri = format!("{}/render", base.trim_end_matches('/')).parse().map_err(|e: hyper::http::uri::InvalidUri| e.to_string())?;
+        if render.scheme_str() != Some("http") || render.host().is_none() {
+            return Err("not an absolute http:// URL".into());
         }
+        Ok(Ssr { render, client: Client::builder(TokioExecutor::new()).build_http(), timeout: Duration::from_secs(2) })
     }
 
     /// `(head, body)` HTML, or `None` to render on the client.
