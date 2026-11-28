@@ -2,12 +2,14 @@
 
 use db::{Db, Uuid};
 use serde::Serialize;
+use ts_rs::TS;
 
 use crate::state::Primary;
 
 /// Serializes as `{ "uuid", "name", "email" }`: the internal `id` and the
 /// secrets never leave the app.
-#[derive(Clone, Serialize, sqlx::FromRow)]
+#[derive(Clone, Serialize, TS, sqlx::FromRow)]
+#[ts(export)]
 pub struct User {
     #[serde(skip)]
     pub id: i64,
@@ -25,11 +27,13 @@ pub struct User {
 
 /// An API token as its owner sees it, for token management: named by
 /// `uuid` in URLs, never by `id` or the token itself.
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, TS, sqlx::FromRow)]
+#[ts(export)]
 pub struct ApiToken {
     pub uuid: Uuid<ApiToken>,
     pub name: String,
     /// Unix seconds; `None` for a token that does not expire.
+    #[ts(type = "number | null")]
     pub expires_at: Option<i64>,
 }
 

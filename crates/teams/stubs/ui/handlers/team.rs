@@ -8,6 +8,7 @@ use route::{
     http::Response,
 };
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use session::Session;
 use teams::{Can, CurrentTeam, Invitation, Membership, Org, Uuid, Store, Target, Team};
 use validate::Valid;
@@ -23,7 +24,7 @@ type Result<T> = std::result::Result<T, Response<Body>>;
 
 const INVITATION_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub struct TeamItem {
     uuid: Uuid<Team>,
     name: String,
@@ -32,7 +33,9 @@ pub struct TeamItem {
     current: bool,
 }
 
-#[derive(Serialize)]
+/// Props for `resources/js/pages/teams/index.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct TeamsPage {
     email: String,
     teams: Vec<TeamItem>,
@@ -40,41 +43,46 @@ pub struct TeamsPage {
     organizations: Vec<Org>,
 }
 
-#[derive(Serialize)]
-pub struct InvitationItem {
-    uuid: Uuid<Invitation>,
-    email: String,
-    role: TeamRole,
+/// A pending invitation; `R` is the team or organization role. Shared with
+/// the organization pages.
+#[derive(Serialize, TS)]
+pub struct InvitationItem<R> {
+    pub uuid: Uuid<Invitation>,
+    pub email: String,
+    pub role: R,
     /// Unix seconds.
-    expires_at: i64,
+    #[ts(type = "number")]
+    pub expires_at: i64,
 }
 
 /// The link of the invitation just sent, flashed for the next page so it
 /// can be copied: the token is not stored, so it cannot be shown later.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, TS)]
 pub struct SentLink {
     uuid: Uuid<Invitation>,
     url: String,
 }
 
-const SENT_LINK: &str = "teams.invitation_link";
+pub const SENT_LINK: &str = "teams.invitation_link";
 
-fn flash_link(app_url: &str, session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
+pub fn flash_link(app_url: &str, session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
     let link = SentLink { uuid: new.invitation.uuid, url: access::invitation_link(app_url, &new.token) };
     if let Err(e) = session.flash(SENT_LINK, &link) {
         tracing::error!("flashing the invitation link: {e}");
     }
 }
 
-#[derive(Serialize)]
-pub struct Abilities {
+#[derive(Serialize, TS)]
+pub struct TeamAbilities {
     rename: bool,
     delete: bool,
     manage_members: bool,
     invite: bool,
 }
 
-#[derive(Serialize)]
+/// Props for `resources/js/pages/teams/show.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct TeamPage {
     email: String,
     team: Team,
@@ -85,9 +93,9 @@ pub struct TeamPage {
     via_org: bool,
     /// Whether this is the user's current team.
     current: bool,
-    can: Abilities,
+    can: TeamAbilities,
     members: Vec<MemberItem<TeamRole>>,
-    invitations: Vec<InvitationItem>,
+    invitations: Vec<InvitationItem<TeamRole>>,
     invitation_link: Option<SentLink>,
 }
 
@@ -142,7 +150,7 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, current: Cu
         Some(id) => t.store().org(id).await.map_err(access::failed)?,
         None => None,
     };
-    let can = Abilities { rename: m.can::<RenameTeam>(), delete: m.can::<DeleteTeam>(), manage_members: m.can::<ManageMembers>(), invite: m.can::<InviteMembers>() };
+    let can = TeamAbilities { rename: m.can::<RenameTeam>(), delete: m.can::<DeleteTeam>(), manage_members: m.can::<ManageMembers>(), invite: m.can::<InviteMembers>() };
     Ok(inertia::render(
         "teams/show",
         TeamPage {

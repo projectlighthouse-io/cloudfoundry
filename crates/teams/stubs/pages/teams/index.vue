@@ -1,13 +1,10 @@
 <script setup lang="ts">
+import type { TeamsPage } from '../../types/TeamsPage'
 import type { Uuid } from '../../types/Uuid'
 import { Link, useForm } from '@inertiajs/vue3'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-defineProps<{
-  email: string
-  teams: { uuid: Uuid<'Team'>; name: string; organization: string | null; role: string; current: boolean }[]
-  organizations: { uuid: Uuid<'Org'>; name: string }[]
-}>()
+defineProps<TeamsPage>()
 
 const form = useForm({ name: '', organization: null as Uuid<'Org'> | null })
 const submit = () => form.post('/teams', { onSuccess: () => form.reset() })

@@ -37,6 +37,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 toml = "0.9"
 
 [package.metadata.art.publish]
+"stubs/types/User.ts" = "resources/js/types/User.ts"
+"stubs/types/ApiToken.ts" = "resources/js/types/ApiToken.ts"
 "stubs/users.rs" = "src/users.rs"
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
@@ -50,6 +52,8 @@ toml = "0.9"
 "stubs/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
 [package.metadata.art.publish-sqlite]
+"stubs/types/User.ts" = "resources/js/types/User.ts"
+"stubs/types/ApiToken.ts" = "resources/js/types/ApiToken.ts"
 "stubs/sqlite/users.rs" = "src/users.rs"
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
@@ -63,6 +67,8 @@ toml = "0.9"
 "stubs/sqlite/migrations/create_users.down.sql" = "migrations/{timestamp}_create_users.down.sql"
 
 [package.metadata.art.publish-mysql]
+"stubs/types/User.ts" = "resources/js/types/User.ts"
+"stubs/types/ApiToken.ts" = "resources/js/types/ApiToken.ts"
 "stubs/mysql/users.rs" = "src/users.rs"
 "stubs/handlers/login.rs" = "src/handlers/login.rs"
 "stubs/requests/login.rs" = "src/requests/login.rs"
@@ -91,11 +97,13 @@ toml = "0.9"
 [package.metadata.art]
 agents = """
 - Users: `src/users.rs` implements `auth::Provider`, `Credentials`, `Remember`, `Tokens` and `Resets` with sqlx.
+- `User` and `ApiToken` are named by `uuid` (`db::Uuid<T>`); `id` is `#[serde(skip)]`. Both derive `ts_rs::TS` and export to `resources/js/types/` (`db` needs feature `ts`, on in `art new`).
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
 - Guard routes with `auth::require::<User>()` in a route group; take `Authed<User>` in handlers that need a user, `Auth<User>` when it is optional.
 - `auth::layer(...)` goes after the session and CSRF layers in `src/main.rs`. Login route and remember cookie settings: `[auth]` in config (`auth::Config`, `.config(cfg.auth)?`).
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/auth.md"""
 notes = """
+Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db::Uuid<T>` and derive `ts_rs::TS`.
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
   src/main.rs           mod users;
@@ -120,6 +128,7 @@ config/default.toml (`env(APP_URL, ...)`): point it at your frontend.
 Optional: `[auth]` and `[limits.login]` sections (`auth::Config`, `throttle::FixedWindow`,
 feature `configured`), applied with `.config(cfg.auth.clone())?` and `Limiter::memory(cfg.limits.login)`."""
 with-ui-notes = """
+Needs `db` with feature `ts` (on in `art new`): `User` and `ApiToken` carry `db::Uuid<T>` and derive `ts_rs::TS`.
 Add `features = ["throttle"]` to `auth`, and the dependency `throttle = { <same source as auth> }`, then:
 
   src/main.rs           mod users;

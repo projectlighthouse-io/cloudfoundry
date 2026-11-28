@@ -10,6 +10,7 @@ use route::{
     http::{Response, StatusCode},
 };
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use teams::Store as _;
 use validate::Errors;
 
@@ -25,7 +26,7 @@ pub fn teams(db: &Db<Primary>) -> Teams {
     teams::Teams::new(teams::SqliteStore::new(db.pool().clone())).require_team(|_user| "Personal".to_owned())
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum TeamRole {
     Owner,
@@ -33,7 +34,7 @@ pub enum TeamRole {
     Member,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 pub enum OrgRole {
     Owner,
@@ -171,7 +172,7 @@ pub async fn not_a_member(db: &Db<Primary>, target: teams::Target<TeamRole, OrgR
 }
 
 /// A member as responses show them: by the user's `uuid`, never their id.
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub struct MemberItem<R> {
     pub uuid: teams::Uuid<crate::users::User>,
     pub name: Option<String>,

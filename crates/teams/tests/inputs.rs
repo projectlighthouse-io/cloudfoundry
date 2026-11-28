@@ -125,3 +125,13 @@ async fn json_carries_uuids_only() {
     assert_eq!(json["team"]["uuid"], core.uuid.to_string());
     assert_eq!(json["invitation"]["uuid"], new.invitation.uuid.to_string());
 }
+
+#[cfg(feature = "ts")]
+#[test]
+fn typescript_shows_uuids_only() {
+    use ts_rs::TS;
+    let cfg = ts_rs::Config::default();
+    assert_eq!(teams::Team::inline(&cfg), r#"{ uuid: Uuid<"Team">, name: string, }"#);
+    assert_eq!(teams::Org::inline(&cfg), r#"{ uuid: Uuid<"Org">, name: string, }"#);
+    assert_eq!(teams::Team::output_path().unwrap(), std::path::Path::new("Team.ts"));
+}

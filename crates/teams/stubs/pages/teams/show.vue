@@ -1,23 +1,11 @@
 <script setup lang="ts">
-import type { Uuid } from '../../types/Uuid'
+import type { TeamPage } from '../../types/TeamPage'
 import { Link, router } from '@inertiajs/vue3'
 import TeamMembers from '../../components/TeamMembers.vue'
 import TeamSettings from '../../components/TeamSettings.vue'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-const props = defineProps<{
-  email: string
-  team: { uuid: Uuid<'Team'>; name: string }
-  organization: { uuid: Uuid<'Org'>; name: string } | null
-  user_uuid: Uuid<'User'>
-  role: string
-  via_org: boolean
-  current: boolean
-  can: { rename: boolean; delete: boolean; manage_members: boolean; invite: boolean }
-  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
-  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
-  invitation_link: { uuid: Uuid<'Invitation'>; url: string } | null
-}>()
+const props = defineProps<TeamPage>()
 
 const base = `/teams/${props.team.uuid}`
 const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')

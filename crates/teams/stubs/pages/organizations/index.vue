@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import type { Uuid } from '../../types/Uuid'
+import type { OrgsPage } from '../../types/OrgsPage'
 import { Link, useForm } from '@inertiajs/vue3'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-defineProps<{ email: string; organizations: { uuid: Uuid<'Org'>; name: string; role: string }[] }>()
+defineProps<OrgsPage>()
 
 const form = useForm({ name: '' })
 const submit = () => form.post('/organizations', { onSuccess: () => form.reset() })

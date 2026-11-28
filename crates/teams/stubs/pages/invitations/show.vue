@@ -1,8 +1,9 @@
 <script setup lang="ts">
+import type { InvitationPage } from '../../types/InvitationPage'
 import { Link } from '@inertiajs/vue3'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-defineProps<{ email: string; problem: string }>()
+defineProps<InvitationPage>()
 </script>
 
 <template>

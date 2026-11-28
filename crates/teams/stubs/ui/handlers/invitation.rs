@@ -3,11 +3,14 @@
 use auth::Authed;
 use route::{Cx, Path, Redirect};
 use serde::Serialize;
+use ts_rs::TS;
 use teams::Error;
 
 use crate::{access, state::App, users::User};
 
-#[derive(Serialize)]
+/// Props for `resources/js/pages/invitations/show.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct InvitationPage {
     email: String,
     problem: &'static str,

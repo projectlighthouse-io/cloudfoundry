@@ -86,6 +86,7 @@ pub trait Grants<P: Permission>: Role {
 
 /// Serializes as `{ "uuid", "name" }`; `id` is for app queries only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Org {
     #[serde(skip)]
     pub id: i64,
@@ -95,6 +96,7 @@ pub struct Org {
 
 /// Serializes as `{ "uuid", "name" }`; the internal ids are for app queries only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 pub struct Team {
     #[serde(skip)]
     pub id: i64,

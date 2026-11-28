@@ -1,21 +1,11 @@
 <script setup lang="ts">
-import type { Uuid } from '../../types/Uuid'
+import type { OrgPage } from '../../types/OrgPage'
 import { Link, useForm } from '@inertiajs/vue3'
 import TeamMembers from '../../components/TeamMembers.vue'
 import TeamSettings from '../../components/TeamSettings.vue'
 import AppLayout from '../../layouts/AppLayout.vue'
 
-const props = defineProps<{
-  email: string
-  organization: { uuid: Uuid<'Org'>; name: string }
-  user_uuid: Uuid<'User'>
-  role: string
-  can: { rename: boolean; delete: boolean; manage_members: boolean }
-  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
-  teams: { uuid: Uuid<'Team'>; name: string }[]
-  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
-  invitation_link: { uuid: Uuid<'Invitation'>; url: string } | null
-}>()
+const props = defineProps<OrgPage>()
 
 const base = `/organizations/${props.organization.uuid}`
 const article = (r: string) => (/^[aeiou]/.test(r) ? 'an' : 'a')

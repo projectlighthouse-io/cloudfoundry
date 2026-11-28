@@ -1,4 +1,9 @@
 <script setup lang="ts">
+import type { InvitationItem } from '../types/InvitationItem'
+import type { MemberItem } from '../types/MemberItem'
+import type { OrgRole } from '../types/OrgRole'
+import type { SentLink } from '../types/SentLink'
+import type { TeamRole } from '../types/TeamRole'
 import type { Uuid } from '../types/Uuid'
 import { router, useForm, usePage } from '@inertiajs/vue3'
 import { computed, ref } from 'vue'
@@ -6,10 +11,10 @@ import { computed, ref } from 'vue'
 const props = defineProps<{
   base: string
   userId: Uuid<'User'>
-  members: { uuid: Uuid<'User'>; email: string; name: string | null; role: string }[]
-  invitations: { uuid: Uuid<'Invitation'>; email: string; role: string; expires_at: number }[]
+  members: MemberItem<TeamRole | OrgRole>[]
+  invitations: InvitationItem<TeamRole | OrgRole>[]
   /** The link of the invitation just sent; tokens are not stored, so only a fresh one can be shown. */
-  sentLink: { uuid: Uuid<'Invitation'>; url: string } | null
+  sentLink: SentLink | null
   canManage: boolean
   canInvite: boolean
   removeNote: string

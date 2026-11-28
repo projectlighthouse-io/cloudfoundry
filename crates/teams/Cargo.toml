@@ -18,6 +18,7 @@ tracing = "0.1"
 auth = { path = "../auth", optional = true }
 session = { path = "../session", features = ["route"], optional = true }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "uuid"], optional = true }
+ts-rs = { version = "12", optional = true }
 
 [features]
 # SQL stores. Publish the tables with `art publish teams [--driver sqlite|mysql]`.
@@ -28,6 +29,8 @@ mysql = ["dep:sqlx", "sqlx/mysql"]
 auth = ["dep:auth"]
 # `CurrentTeam`: the team a user last switched to, kept in the session.
 session = ["dep:session"]
+# `ts_rs::TS` for `Team` and `Org` (`{ uuid: Uuid<"Team">, name: string }`), for page prop types.
+ts = ["dep:ts-rs", "db/ts"]
 
 [dev-dependencies]
 http-body-util = "0.1"
@@ -81,10 +84,28 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/pages/invitations/show.vue" = "resources/js/pages/invitations/show.vue"
 "stubs/components/TeamMembers.vue" = "resources/js/components/TeamMembers.vue"
 "stubs/components/TeamSettings.vue" = "resources/js/components/TeamSettings.vue"
+# What `cargo test export_bindings` (`art dev`) writes from the handlers' `#[ts(export)]` props.
+"stubs/types/InvitationItem.ts" = "resources/js/types/InvitationItem.ts"
+"stubs/types/InvitationPage.ts" = "resources/js/types/InvitationPage.ts"
+"stubs/types/MemberItem.ts" = "resources/js/types/MemberItem.ts"
+"stubs/types/Org.ts" = "resources/js/types/Org.ts"
+"stubs/types/OrgAbilities.ts" = "resources/js/types/OrgAbilities.ts"
+"stubs/types/OrgItem.ts" = "resources/js/types/OrgItem.ts"
+"stubs/types/OrgPage.ts" = "resources/js/types/OrgPage.ts"
+"stubs/types/OrgRole.ts" = "resources/js/types/OrgRole.ts"
+"stubs/types/OrgsPage.ts" = "resources/js/types/OrgsPage.ts"
+"stubs/types/SentLink.ts" = "resources/js/types/SentLink.ts"
+"stubs/types/Team.ts" = "resources/js/types/Team.ts"
+"stubs/types/TeamAbilities.ts" = "resources/js/types/TeamAbilities.ts"
+"stubs/types/TeamItem.ts" = "resources/js/types/TeamItem.ts"
+"stubs/types/TeamPage.ts" = "resources/js/types/TeamPage.ts"
+"stubs/types/TeamRole.ts" = "resources/js/types/TeamRole.ts"
+"stubs/types/TeamsPage.ts" = "resources/js/types/TeamsPage.ts"
 
 [package.metadata.art]
 agents = """
 - Roles (`TeamRole`, `OrgRole`) and permissions (unit structs with `teams::Grants` impls) live in `src/access.rs`. Add a permission there, then take `Can<MyPermission, TeamRole>` (or `OrgCan<_, OrgRole>`) in the handler: it is `404` for non-members and `403` without the permission.
+- Page props are Rust structs deriving `ts_rs::TS` (`#[ts(export)]`) in `src/handlers/{team,organization,invitation}.rs`; the Vue pages import the generated types from `resources/js/types/`. Change a prop in Rust, then `art dev` (or `cargo test export_bindings`) regenerates them. `Team` and `Org` get `TS` from teams feature `ts`.
 - Routes name their team by `uuid` (`teams::Uuid<Team>`), never by the internal `id` (which is `#[serde(skip)]`): `/teams/{team}/...`, `/organizations/{org}/...`. `Membership<TeamRole>` loads `{team}` for any member; `CurrentTeam<TeamRole>` is the team to land on.
 - `CurrentTeam` is stored in `users.current_team_id` and cached in the session; `current.set(&membership).await` switches. Teams are required (`require_team` in `src/access.rs`): a user without one gets a personal team, and `Error::LastTeam` stops them leaving their last; call `keeps_a_team` before deleting a team or organization.
 - Before `invite`, call `access::not_a_member` (the store has no emails). One pending invitation per email (`AlreadyInvited`); `resend_team_invitation` / `resend_org_invitation` issue a new link.
@@ -131,7 +152,7 @@ gets a personal team unless you drop `.require_team(...)` in src/access.rs. Role
 permissions are in src/access.rs. Invitation
 links are logged until you send them by mail (`send_invitation` in src/access.rs)."""
 with-ui-notes = """
-Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session"] }`
+Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session", "ts"] }`
 (`<driver>` is sqlite, postgres or mysql), then:
 
   src/main.rs           mod access;

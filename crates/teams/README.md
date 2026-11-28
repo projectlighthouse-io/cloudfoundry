@@ -31,8 +31,11 @@ Routes name their team by its `uuid` (a `db::Uuid<Team>`, re-exported as `teams:
 `/organizations/{org}/...`. A numeric id in the path is a 404. `Team`, `Org` and `Invitation` keep their internal `id` for
 app queries but never serialize it: JSON carries `uuid`. `Member` is not `Serialize` (its `user_id` is internal);
 the published `access::member_items` maps members to `{ uuid, name, email, role }` by the user's `uuid`, and
-`/members/{user}` takes that uuid. The published Vue pages type uuids as `Uuid<'Team'>`, `Uuid<'Org'>`,
-`Uuid<'Invitation'>` and `Uuid<'User'>` (from `resources/js/types/Uuid.ts`): the brand is the Rust type's name.
+`/members/{user}` takes that uuid. With feature `ts`, `Team` and `Org` derive `ts_rs::TS` (`{ uuid: Uuid<"Team">, name: string }`). The
+`--with-ui` stubs' page props (`TeamPage`, `OrgPage`, ...) derive `TS` and export, and the Vue pages import those
+generated types instead of declaring prop shapes: Rust is the one source. Uuids are branded strings
+(`Uuid<"Team">`, `Uuid<"User">`, ...); the brand is the Rust type's name. The generated files ship with the stubs so
+pages build before the first export.
 `teams::layer(teams, teams::auth_user(|u: &User| u.id))` goes after `auth::layer`.
 
 ## Rules

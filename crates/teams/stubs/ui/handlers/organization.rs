@@ -8,10 +8,12 @@ use route::{
     http::Response,
 };
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 use session::Session;
 use teams::{Invitation, Org, OrgCan, OrgMembership, Uuid, Store, Target, Team};
 use validate::Valid;
 
+use super::team::{InvitationItem, SENT_LINK, SentLink, flash_link};
 use crate::{
     access::{self, MemberItem, DeleteOrg, ManageOrgMembers, OrgRole, RenameOrg, TeamRole},
     requests::team::{NewOrganization, OrgInvite, OrgRoleChange},
@@ -23,63 +25,41 @@ type Result<T> = std::result::Result<T, Response<Body>>;
 
 const INVITATION_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
 pub struct OrgItem {
     uuid: Uuid<Org>,
     name: String,
     role: OrgRole,
 }
 
-#[derive(Serialize)]
+/// Props for `resources/js/pages/organizations/index.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct OrgsPage {
     email: String,
     organizations: Vec<OrgItem>,
 }
 
-#[derive(Serialize)]
-pub struct InvitationItem {
-    uuid: Uuid<Invitation>,
-    email: String,
-    role: OrgRole,
-    /// Unix seconds.
-    expires_at: i64,
-}
-
-/// The link of the invitation just sent, flashed for the next page so it
-/// can be copied: the token is not stored, so it cannot be shown later.
-#[derive(Serialize, Deserialize)]
-pub struct SentLink {
-    uuid: Uuid<Invitation>,
-    url: String,
-}
-
-const SENT_LINK: &str = "teams.invitation_link";
-
-fn flash_link(app_url: &str, session: &Session, new: &teams::NewInvitation<TeamRole, OrgRole>) {
-    let link = SentLink { uuid: new.invitation.uuid, url: access::invitation_link(app_url, &new.token) };
-    if let Err(e) = session.flash(SENT_LINK, &link) {
-        tracing::error!("flashing the invitation link: {e}");
-    }
-}
-
-#[derive(Serialize)]
-pub struct Abilities {
+#[derive(Serialize, TS)]
+pub struct OrgAbilities {
     rename: bool,
     delete: bool,
     manage_members: bool,
 }
 
-#[derive(Serialize)]
+/// Props for `resources/js/pages/organizations/show.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
 pub struct OrgPage {
     email: String,
     organization: Org,
     /// The viewer, to mark their own row.
     user_uuid: Uuid<User>,
     role: OrgRole,
-    can: Abilities,
+    can: OrgAbilities,
     members: Vec<MemberItem<OrgRole>>,
     teams: Vec<Team>,
-    invitations: Vec<InvitationItem>,
+    invitations: Vec<InvitationItem<OrgRole>>,
     invitation_link: Option<SentLink>,
 }
 
@@ -123,7 +103,7 @@ pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, m: OrgMembe
             Target::Team { .. } => None,
         })
         .collect();
-    let can = Abilities { rename: m.can::<RenameOrg>(), delete: m.can::<DeleteOrg>(), manage_members: m.can::<ManageOrgMembers>() };
+    let can = OrgAbilities { rename: m.can::<RenameOrg>(), delete: m.can::<DeleteOrg>(), manage_members: m.can::<ManageOrgMembers>() };
     Ok(inertia::render(
         "organizations/show",
         OrgPage {
