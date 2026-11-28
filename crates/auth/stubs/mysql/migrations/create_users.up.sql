@@ -4,7 +4,8 @@ create table users (
     uuid binary(16) not null unique,
     name varchar(255),
     email varchar(191) not null unique,
-    password_hash varchar(255) not null,
+    -- Null for accounts without a password (social login, passkeys only).
+    password_hash varchar(255),
     remember_token varchar(100),
     created_at timestamp not null default current_timestamp
 );

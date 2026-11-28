@@ -11,7 +11,7 @@ use session::Session;
 use ts_rs::TS;
 use validate::Errors;
 
-use crate::{mailer::mailer, state::App, users::{User, UserStore}};
+use crate::{mailer::deliver, state::App, users::{User, UserStore}};
 
 /// Shown once on the next page.
 pub(crate) const STATUS: &str = "status";
@@ -43,17 +43,11 @@ pub(crate) fn failed(e: VerifyError) -> Response<Body> {
     }
 }
 
-/// Mail the link to `email`, the address being verified. A mail failure is
-/// logged; the user can ask for a new link.
+/// Mail the link to `email`, the address being verified (`resources/mail/verify-email.md`).
+/// A mail failure is logged; the user can ask for a new link.
 pub(crate) async fn send_verification_link(app: &App, email: &str, token: &str) {
     let link = format!("{}/verify-email/{token}", app.cfg.app_url);
-    let text = format!("Confirm that {email} is your address (the link works for an hour):
-{link}
-
-If you did not ask for this, ignore this mail.");
-    if let Err(e) = mailer(app).send(mail::Message::new(email, "Verify your email address", text)).await {
-        tracing::error!("verification mail to {email}: {e}");
-    }
+    deliver(app, include_str!("../../resources/mail/verify-email.md"), email, &[("email", email), ("link", &link)]).await;
 }
 
 /// "Check your inbox", with a button for a new link. Verified users go home.

@@ -53,21 +53,24 @@ pages build before the first export.
   is replaced. Whether the email already belongs to a member is the app's check (the store keeps user ids); the
   published `access::not_a_member` does it.
 
-## Required teams
-
-`Teams::new(store).require_team(|user_id| "Personal".to_owned())` (on in the published `src/access.rs`):
-
-- A user with no team gets a personal team, as owner, the first time `CurrentTeam` is resolved.
-- Leaving or being removed from your last team is `Error::LastTeam`. Before deleting a team or an organization,
-  call `keeps_a_team(user, |team| ...)` with the teams that go away.
-
 ## Current team
 
-`CurrentTeam<R>` is stored in `users.current_team_id` (the teams migration adds the column; publish auth first) and
-cached in the session. It resolves, in order: the session's id, the stored id, then the first team by id (or a new
-personal team in required mode), and stores what it falls back to. Each id is checked, so a team the user left is
-skipped. A new login, another device or another app instance lands on the stored team; a session keeps its cached
-choice until it ends. Switch with `current.set(&membership).await`.
+No personal teams: a user creates a team or joins one. `CurrentTeam<R>` is the team they picked, stored in
+`users.current_team_id` (the teams migration adds the column; publish auth first) and cached in the session. It
+resolves the session's id, then the stored id, each checked; there is no fallback to "the first team". A pick the
+user can no longer open (team deleted, user removed) is cleared and `CurrentTeam` is `None`. Pick with
+`current.set(&membership).await`; `clear()` forgets it.
+
+Routes that need a team go behind `teams::require_current_team::<R>()`: there `CurrentTeam` is `Some`. Without one,
+page visits go to `/teams/select` (or `/teams/create` for a user with no team; `.select_path` / `.create_path` change
+them) and JSON gets `409 {"error": "team_required"}`; `teams::intended(&session, default)` returns to the page that
+asked. Keep the picker, create, invitations, settings and logout outside the guarded group.
+
+## Your own columns
+
+Add columns to `teams` (slug, plan, ...) in an app migration and use them with app queries keyed by `team.id`:
+`alter table teams add column slug text unique`, `select slug from teams where id = $1`. The store reads and writes
+only its own columns, so yours survive updates; make them nullable or give them a default.
 
 ## Inputs
 

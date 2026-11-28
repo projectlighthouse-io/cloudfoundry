@@ -88,6 +88,7 @@ impl From<TwitterUser> for SocialUser {
             provider: "twitter",
             id: u.id,
             name: Some(u.name),
+            username: Some(u.username),
             email: None,
             email_verified: None,
             avatar: u.profile_image_url,

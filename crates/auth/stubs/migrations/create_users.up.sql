@@ -4,7 +4,8 @@ create table users (
     uuid uuid not null unique,
     name text,
     email text not null unique,
-    password_hash text not null,
+    -- Null for accounts without a password (social login, passkeys only).
+    password_hash text,
     remember_token text,
     created_at timestamptz not null default now()
 );

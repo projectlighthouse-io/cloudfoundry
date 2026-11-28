@@ -104,7 +104,8 @@ impl From<RedditUser> for SocialUser {
         SocialUser {
             provider: "reddit",
             id: u.id,
-            name: Some(u.name),
+            name: Some(u.name.clone()),
+            username: Some(u.name),
             email: None,
             email_verified: None,
             avatar: u.icon_img,

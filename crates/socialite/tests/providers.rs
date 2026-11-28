@@ -60,7 +60,7 @@ async fn login<P: Provider + 'static>(p: P) -> (String, SocialUser) {
     }
     async fn back<P: Provider>(cx: Cx<P>, (s, Query(cb)): (Session, Query<Callback>)) -> String {
         let u = cx.social_user(&s, cb).await.unwrap();
-        serde_json::to_string(&json!([u.provider, u.id, u.name, u.email, u.email_verified, u.avatar, u.token])).unwrap()
+        serde_json::to_string(&json!([u.provider, u.id, u.name, u.email, u.email_verified, u.avatar, u.token, u.username])).unwrap()
     }
     let mut r = Router::new();
     r.get("/go", go::<P>);
@@ -78,6 +78,7 @@ async fn login<P: Provider + 'static>(p: P) -> (String, SocialUser) {
         provider: Box::leak(s(0).unwrap().into_boxed_str()),
         id: s(1).unwrap(),
         name: s(2),
+        username: s(7),
         email: s(3),
         email_verified: v[4].as_bool(),
         avatar: s(5),
@@ -124,7 +125,7 @@ async fn reddit_basic_auth_no_pkce_no_email() {
     let base = fake(seen.clone()).await;
     let (url, u) = login(socialite::Reddit::new("id", "secret", "http://app/cb").base_urls(format!("{base}/reddit"), format!("{base}/reddit-api"))).await;
     assert!(url.contains("duration=temporary") && url.contains("scope=identity") && !url.contains("code_challenge"));
-    assert_eq!((u.provider, u.id.as_str(), u.name.as_deref(), u.email), ("reddit", "t2abc", Some("ada"), None));
+    assert_eq!((u.provider, u.id.as_str(), u.name.as_deref(), u.username.as_deref(), u.email), ("reddit", "t2abc", Some("ada"), Some("ada"), None));
     assert_eq!(u.avatar.as_deref(), Some("https://img/r.png?a=1&b=2"), "&amp; unescaped");
     let (auth, form) = seen.lock().unwrap()["/reddit/api/v1/access_token"].clone();
     assert_eq!(auth.as_deref(), Some(basic("id", "secret").as_str()));
@@ -138,7 +139,7 @@ async fn twitter_basic_auth_with_pkce() {
     let base = fake(seen.clone()).await;
     let (url, u) = login(socialite::Twitter::new("id", "secret", "http://app/cb").base_urls(format!("{base}/x"), format!("{base}/x-api"))).await;
     assert!(url.starts_with(&format!("{base}/x/i/oauth2/authorize?")) && url.contains("scope=users.read+tweet.read") && url.contains("code_challenge="));
-    assert_eq!((u.provider, u.id.as_str(), u.name.as_deref(), u.email, u.avatar.as_deref()), ("twitter", "44", Some("Ada"), None, Some("https://img/x.png")));
+    assert_eq!((u.provider, u.id.as_str(), u.name.as_deref(), u.username.as_deref(), u.email, u.avatar.as_deref()), ("twitter", "44", Some("Ada"), Some("ada"), None, Some("https://img/x.png")));
     let (auth, form) = seen.lock().unwrap()["/x-api/2/oauth2/token"].clone();
     assert_eq!(auth.as_deref(), Some(basic("id", "secret").as_str()));
     assert!(form.contains_key("code_verifier"));

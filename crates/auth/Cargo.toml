@@ -62,6 +62,8 @@ toml = "0.9"
 "stubs/requests/email.rs" = "src/requests/email.rs"
 "stubs/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
 "stubs/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
+"stubs/mail/verify-email.md" = "resources/mail/verify-email.md"
+"stubs/mail/reset-password.md" = "resources/mail/reset-password.md"
 
 [package.metadata.art.publish-sqlite]
 "stubs/types/User.ts" = "resources/js/types/User.ts"
@@ -85,6 +87,8 @@ toml = "0.9"
 "stubs/requests/email.rs" = "src/requests/email.rs"
 "stubs/sqlite/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
 "stubs/sqlite/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
+"stubs/mail/verify-email.md" = "resources/mail/verify-email.md"
+"stubs/mail/reset-password.md" = "resources/mail/reset-password.md"
 
 [package.metadata.art.publish-mysql]
 "stubs/types/User.ts" = "resources/js/types/User.ts"
@@ -108,6 +112,8 @@ toml = "0.9"
 "stubs/requests/email.rs" = "src/requests/email.rs"
 "stubs/mysql/migrations/add_email_verification.up.sql" = "migrations/{timestamp}_add_email_verification.up.sql"
 "stubs/mysql/migrations/add_email_verification.down.sql" = "migrations/{timestamp}_add_email_verification.down.sql"
+"stubs/mail/verify-email.md" = "resources/mail/verify-email.md"
+"stubs/mail/reset-password.md" = "resources/mail/reset-password.md"
 
 # `art publish auth --with-ui`: Inertia handlers and Vue pages. Entries are
 # added to the driver's table; one with the same destination replaces it.
@@ -141,7 +147,7 @@ agents = """
 - `User` and `ApiToken` are named by `uuid` (`db::Uuid<T>`); `id` is `#[serde(skip)]`. Both derive `ts_rs::TS` and export to `resources/js/types/` (`db` needs feature `ts`, on in `art new`).
 - Log in with `auth.attempt(&users, email, password, remember)` in `src/handlers/login.rs`; it throttles, verifies, rehashes and logs in. Use `auth.login(&user)` for a user you already have.
 - Sudo mode: take `auth::RecentlyConfirmed<User>` (not `Authed<User>`) in handlers for dangerous actions (disable 2FA, delete account); the user re-enters their password at `password.confirm`, valid `auth::Config::password_timeout` (15 min); users without a password confirm with a passkey or their social provider, then `auth.mark_confirmed()`. `auth.validate(...)` checks a password without logging in (for a second factor).
-- Email verification: register mails a link (`auth::verification_token`, sent by `send_verification_link` in `src/handlers/verification.rs` through `crate::mailer`); `auth.verify_email(&users, token)` follows it. Take `auth::Verified<User>` for routes that need a verified address (`.verification()` on the layer). Changing the email (`src/handlers/email.rs`) sends the link to the new address, which replaces the old one only once verified.
+- Email verification: register mails a link (`auth::verification_token`, sent by `send_verification_link` in `src/handlers/verification.rs` with `crate::mailer::deliver` and `resources/mail/verify-email.md`); `auth.verify_email(&users, token)` follows it. Take `auth::Verified<User>` for routes that need a verified address (`.verification()` on the layer). Changing the email (`src/handlers/email.rs`) sends the link to the new address, which replaces the old one only once verified.
 - Browsers & devices (`src/handlers/devices.rs`): login records the user on the session; `session::Devices` on `UserStore::sessions()` lists them; `auth.revoke_session(&sessions, public_id)` / `auth.revoke_other_sessions(&sessions)` end them (and clear "remember me" tokens).
 - Events (feature `event`, `.events(app.events.clone(), app.clone())` on the layer): `auth::events::{SignedIn, SignedOut, SessionRevoked, EmailVerified}`.
 - Guard routes with `auth::require::<User>()` in a route group; take `Authed<User>` in handlers that need a user, `Auth<User>` when it is optional.

@@ -7,18 +7,23 @@ description = "Send mail: SMTP, the log, or memory for tests"
 
 [dependencies]
 lettre = { version = "0.11.24", default-features = false, features = ["builder", "smtp-transport", "hostname", "tokio1", "tokio1-rustls", "ring", "webpki-roots"] }
+serde = { version = "1", features = ["derive"] }
 tracing = "0.1"
 
 configured = { path = "../configured", default-features = false, optional = true }
+queue = { path = "../queue", optional = true }
 
 [features]
+# `SendMail` job and `send_later`: send from a `queue` worker.
+queue = ["dep:queue"]
 # `Config` deserializes through `configured` (`url` is a secret: it may hold a password).
 configured = ["dep:configured"]
 
 [dev-dependencies]
 configured = { path = "../configured" }
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+queue = { path = "../queue" }
 toml = "0.9"
 
 [package.metadata.art.publish]
@@ -26,19 +31,21 @@ toml = "0.9"
 
 [package.metadata.art]
 agents = """
-- Mail (`mail`): `crate::mailer::mailer(&app)` is the app's one `mail::Mailer`, built from `[mail]` in config (`url`: `smtp://user:pass@host:587?tls=required`, `smtps://...`, `log`, or `memory`; `from`). Send with `mailer.send(mail::Message::new(to, subject, text)).await`; `.html(...)` adds an HTML part.
-- The `log` driver (the default) writes each mail to the log: development only, links in it are live. Tests use `memory` and read `mailer.sent()`.
-- Mail is sent in the request; move it to a job (`art make:job`) when SMTP latency matters.
+- Mail (`mail`): `crate::mailer::mailer(&app)` is the app's one `mail::Mailer`, built from `[mail]` in config (`url`: `smtp://user:pass@host:587?tls=required`, `smtps://...`, `log`, or `memory`; `from`). `mailer(&app).send(message).await` sends now.
+- The `log` driver (the default) writes each mail to the log: development only, links in it are live. Tests build a `mail::MemoryMailer` and read `.sent()`.
 - Docs: https://toolkit.projectlighthouse.io/docs/crates/mail.md"""
 notes = """
-Add the dependency `mail = { <same source as the other crates>, features = ["configured"] }`, then:
+Add the dependency `mail = { <same source as the other crates>, features = ["configured", "queue"] }`, then:
 
   src/main.rs           mod mailer;
+  src/jobs/mod.rs       .register::<mail::SendMail<crate::state::App>>()   // queued mail
+                        (queued mail needs the jobs table: `art publish queue`, and a running `queue:work`)
   src/config.rs         #[serde(default)]
                         pub mail: mail::Config,
   config/default.toml   [mail]
                         url = "secret_env(MAIL_URL, log)"   # smtp://user:pass@host:587?tls=required, smtps://..., log, memory
                         from = "env(MAIL_FROM, hello@example.test)"
+                        queue = true   # mail goes out from `queue:work`; false sends during the request
 
 Locally, Mailpit catches everything: `docker run -p 1025:1025 -p 8025:8025 axllent/mailpit`,
 MAIL_URL=smtp://127.0.0.1:1025, and read the mail at http://localhost:8025."""

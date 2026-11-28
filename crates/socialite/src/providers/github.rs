@@ -113,7 +113,8 @@ impl From<GitHubUser> for SocialUser {
         SocialUser {
             provider: "github",
             id: u.id.to_string(),
-            name: u.name.or(Some(u.login)),
+            name: u.name.or_else(|| Some(u.login.clone())),
+            username: Some(u.login),
             email: u.email,
             email_verified: u.email_verified,
             avatar: u.avatar_url,

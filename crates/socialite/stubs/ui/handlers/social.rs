@@ -47,3 +47,41 @@ pub async fn callback(cx: Cx<App>, auth: Auth<User>, session: Session, social: S
         }
     }
 }
+
+/// Props for `resources/js/pages/settings/connected-accounts.vue`.
+#[derive(serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ConnectedAccountsPage {
+    email: String,
+    /// Whether the user can sign in with a password, so unlinking the last provider is safe.
+    has_password: bool,
+    accounts: Vec<crate::social::SocialAccount>,
+}
+
+/// Linked providers, with "Connect" buttons for the others (the shared `social` prop).
+pub async fn accounts(cx: Cx<App>, user: auth::Authed<User>) -> Result<inertia::Page<ConnectedAccountsPage>, route::http::StatusCode> {
+    let users = UserStore { db: cx.db.clone() };
+    let accounts = users.social_accounts(user.id).await.map_err(|e| {
+        tracing::error!("social accounts: {e}");
+        route::http::StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(inertia::render("settings/connected-accounts", ConnectedAccountsPage { email: user.email.clone(), has_password: user.password_hash.is_some(), accounts }))
+}
+
+/// Unlink a provider, unless it is the last way to sign in. Needs a recent confirmation.
+pub async fn unlink(cx: Cx<App>, user: auth::RecentlyConfirmed<User>, session: Session, route::Path(provider): route::Path<String>) -> Redirect {
+    let users = UserStore { db: cx.db.clone() };
+    let error = match users.unlink_social(&user, &provider).await {
+        Ok(()) => None,
+        Err(crate::social::UnlinkError::NotLinked) => Some("That provider is not connected."),
+        Err(crate::social::UnlinkError::LastSignIn) => Some("This is your only way to sign in. Set a password first."),
+        Err(crate::social::UnlinkError::Db(e)) => {
+            tracing::error!("unlink {provider}: {e}");
+            Some("Something went wrong. Please try again.")
+        }
+    };
+    if let Some(message) = error {
+        let _ = session.flash("errors", &BTreeMap::from([("provider", message)]));
+    }
+    Redirect::to_route("social.accounts")
+}

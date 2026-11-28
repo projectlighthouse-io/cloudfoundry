@@ -88,7 +88,8 @@ impl From<GitLabUser> for SocialUser {
         SocialUser {
             provider: "gitlab",
             id: u.sub,
-            name: u.name.or(u.nickname),
+            name: u.name.or_else(|| u.nickname.clone()),
+            username: u.nickname,
             email: u.email,
             email_verified: Some(u.email_verified),
             avatar: u.picture,

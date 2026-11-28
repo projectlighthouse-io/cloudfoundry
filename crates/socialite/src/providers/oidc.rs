@@ -129,7 +129,8 @@ impl From<OidcUser> for SocialUser {
         SocialUser {
             provider: "oidc",
             id: u.sub,
-            name: u.name.or(u.preferred_username),
+            name: u.name.or_else(|| u.preferred_username.clone()),
+            username: u.preferred_username,
             email: u.email,
             email_verified: Some(u.email_verified),
             avatar: u.picture,

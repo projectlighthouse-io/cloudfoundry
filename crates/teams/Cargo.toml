@@ -27,7 +27,7 @@ sqlite = ["dep:sqlx", "sqlx/sqlite"]
 mysql = ["dep:sqlx", "sqlx/mysql"]
 # `teams::auth_user`: take the user id from the `auth` crate's logged-in user.
 auth = ["dep:auth"]
-# `CurrentTeam`: the team a user last switched to, kept in the session.
+# `CurrentTeam` (the team a user picked, kept in the session) and `require_current_team`.
 session = ["dep:session"]
 # `ts_rs::TS` for `Team` and `Org` (`{ uuid: Uuid<"Team">, name: string }`), for page prop types.
 ts = ["dep:ts-rs", "db/ts"]
@@ -48,6 +48,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
 "stubs/migrations/add_current_team.up.sql" = "migrations/{timestamp}_add_current_team_to_users.up.sql"
 "stubs/migrations/add_current_team.down.sql" = "migrations/{timestamp}_add_current_team_to_users.down.sql"
+"stubs/mail/invitation.md" = "resources/mail/invitation.md"
 
 [package.metadata.art.publish-sqlite]
 "stubs/sqlite/access.rs" = "src/access.rs"
@@ -59,6 +60,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
 "stubs/migrations/add_current_team.up.sql" = "migrations/{timestamp}_add_current_team_to_users.up.sql"
 "stubs/migrations/add_current_team.down.sql" = "migrations/{timestamp}_add_current_team_to_users.down.sql"
+"stubs/mail/invitation.md" = "resources/mail/invitation.md"
 
 [package.metadata.art.publish-mysql]
 "stubs/mysql/access.rs" = "src/access.rs"
@@ -70,6 +72,7 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/migrations/create_teams.down.sql" = "migrations/{timestamp}_create_teams.down.sql"
 "stubs/migrations/add_current_team.up.sql" = "migrations/{timestamp}_add_current_team_to_users.up.sql"
 "stubs/migrations/add_current_team.down.sql" = "migrations/{timestamp}_add_current_team_to_users.down.sql"
+"stubs/mail/invitation.md" = "resources/mail/invitation.md"
 
 # `art publish teams --with-ui`: Inertia handlers and Vue pages. Entries are
 # added to the driver's table; one with the same destination replaces it.
@@ -79,6 +82,8 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/ui/handlers/invitation.rs" = "src/handlers/invitation.rs"
 "stubs/pages/teams/index.vue" = "resources/js/pages/teams/index.vue"
 "stubs/pages/teams/show.vue" = "resources/js/pages/teams/show.vue"
+"stubs/pages/teams/select.vue" = "resources/js/pages/teams/select.vue"
+"stubs/pages/teams/create.vue" = "resources/js/pages/teams/create.vue"
 "stubs/pages/organizations/index.vue" = "resources/js/pages/organizations/index.vue"
 "stubs/pages/organizations/show.vue" = "resources/js/pages/organizations/show.vue"
 "stubs/pages/invitations/show.vue" = "resources/js/pages/invitations/show.vue"
@@ -101,13 +106,17 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
 "stubs/types/TeamPage.ts" = "resources/js/types/TeamPage.ts"
 "stubs/types/TeamRole.ts" = "resources/js/types/TeamRole.ts"
 "stubs/types/TeamsPage.ts" = "resources/js/types/TeamsPage.ts"
+"stubs/types/SelectTeamPage.ts" = "resources/js/types/SelectTeamPage.ts"
+"stubs/types/CreateTeamPage.ts" = "resources/js/types/CreateTeamPage.ts"
 
 [package.metadata.art]
 agents = """
 - Roles (`TeamRole`, `OrgRole`) and permissions (unit structs with `teams::Grants` impls) live in `src/access.rs`. Add a permission there, then take `Can<MyPermission, TeamRole>` (or `OrgCan<_, OrgRole>`) in the handler: it is `404` for non-members and `403` without the permission.
 - Page props are Rust structs deriving `ts_rs::TS` (`#[ts(export)]`) in `src/handlers/{team,organization,invitation}.rs`; the Vue pages import the generated types from `resources/js/types/`. Change a prop in Rust, then `art dev` (or `cargo test export_bindings`) regenerates them. `Team` and `Org` get `TS` from teams feature `ts`.
 - Routes name their team by `uuid` (`teams::Uuid<Team>`), never by the internal `id` (which is `#[serde(skip)]`): `/teams/{team}/...`, `/organizations/{org}/...`. `Membership<TeamRole>` loads `{team}` for any member; `CurrentTeam<TeamRole>` is the team to land on.
-- `CurrentTeam` is stored in `users.current_team_id` and cached in the session; `current.set(&membership).await` switches. Teams are required (`require_team` in `src/access.rs`): a user without one gets a personal team, and `Error::LastTeam` stops them leaving their last; call `keeps_a_team` before deleting a team or organization.
+- `CurrentTeam` is stored in `users.current_team_id` and cached in the session. Picking is explicit: `current.set(&membership).await` (the switch handler; creating a team picks it). No personal teams and no fallback: a pick the user lost (team deleted, removed) is cleared.
+- Routes that need a team go in a group with `r.layer(teams::require_current_team::<TeamRole>())`: there `CurrentTeam` is always `Some`; without one, pages go to `/teams/select` (or `/teams/create` for a user with no team) and JSON gets `409 {"error": "team_required"}`. Keep the picker, create, invitations, settings and logout outside it. After picking, `teams::intended(&session, default)` returns to the page that asked.
+- Own columns on teams (slug, plan, ...): an app migration `alter table teams add column slug ...` and app queries keyed by `membership.team.id`; the store never touches unknown columns.
 - Before `invite`, call `access::not_a_member` (the store has no emails). One pending invitation per email (`AlreadyInvited`); `resend_team_invitation` / `resend_org_invitation` issue a new link.
 - Change teams through `access::teams(&cx.db)` (`create_team`, `add_member`, `change_role`, `invite`, `accept`, ...): it enforces the last-owner and org-membership rules. Map its errors with `access::failed`.
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/teams.md"""
@@ -147,10 +156,18 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.post("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
                         });
 
-Then run `art migrate` (it adds `users.current_team_id`; publish auth first). Every user
-gets a personal team unless you drop `.require_team(...)` in src/access.rs. Roles and
-permissions are in src/access.rs. Invitation
-links are logged until you send them by mail (`send_invitation` in src/access.rs)."""
+Then run `art migrate` (it adds `users.current_team_id`; publish auth first). Put the routes
+that need a team behind the guard, outside the group above:
+
+                        r.group("/app", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.layer(teams::require_current_team::<access::TeamRole>());   // CurrentTeam is Some here
+                            r.get("/dashboard", handlers::dashboard).name("dashboard");
+                        });
+
+Roles and permissions are in src/access.rs. Invitation
+links are mailed by `send_invitation` in src/access.rs (`resources/mail/invitation.md`); needs
+`art publish mail`."""
 with-ui-notes = """
 Add the dependency `teams = { <same source as auth>, features = ["<driver>", "auth", "session", "ts"] }`
 (`<driver>` is sqlite, postgres or mysql), then:
@@ -162,6 +179,8 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
   src/routes.rs         r.group("", |r| {
                             r.layer(auth::require::<users::User>());
                             r.get("/teams", handlers::team::index).name("teams");
+                            r.get("/teams/select", handlers::team::select).name("teams.select");
+                            r.get("/teams/create", handlers::team::create).name("teams.create");
                             r.post("/teams", handlers::team::store).name("teams.store");
                             r.get("/teams/{team}", handlers::team::show).name("teams.show");
                             r.put("/teams/{team}", handlers::team::update).name("teams.update");
@@ -187,10 +206,18 @@ Add the dependency `teams = { <same source as auth>, features = ["<driver>", "au
                             r.get("/invitations/{token}", handlers::invitation::accept).name("invitations.accept");
                         });
 
-Then run `art migrate` (it adds `users.current_team_id`; publish auth first). Every user
-gets a personal team unless you drop `.require_team(...)` in src/access.rs. Roles and
-permissions are in src/access.rs. Invitation
-links are logged until you send them by mail (`send_invitation` in src/access.rs).
+Then run `art migrate` (it adds `users.current_team_id`; publish auth first). Put the routes
+that need a team behind the guard, outside the group above:
+
+                        r.group("/app", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.layer(teams::require_current_team::<access::TeamRole>());   // CurrentTeam is Some here
+                            r.get("/dashboard", handlers::dashboard).name("dashboard");
+                        });
+
+Roles and permissions are in src/access.rs. Invitation
+links are mailed by `send_invitation` in src/access.rs (`resources/mail/invitation.md`); needs
+`art publish mail`.
 Add `{ href: '/teams', label: 'Teams' }` and `{ href: '/organizations', label: 'Organizations' }`
 to `links` in resources/js/components/UserMenu.vue."""
 

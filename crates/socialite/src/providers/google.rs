@@ -135,6 +135,7 @@ impl From<GoogleUser> for SocialUser {
             provider: "google",
             id: u.sub,
             name: u.name,
+            username: None,
             email: u.email,
             email_verified: Some(u.email_verified),
             avatar: u.picture,

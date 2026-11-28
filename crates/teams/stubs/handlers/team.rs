@@ -61,9 +61,14 @@ pub async fn index(cx: Cx<App>, user: Authed<User>) -> Result<Json<Vec<TeamSumma
 }
 
 /// A new team, owned by the user. In an organization, the user must be a member of it.
-pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewTeam>>) -> Result<(StatusCode, Json<Team>)> {
+/// A new team becomes the current one.
+pub async fn store(cx: Cx<App>, user: Authed<User>, mut current: CurrentTeam<TeamRole>, input: Valid<Json<NewTeam>>) -> Result<(StatusCode, Json<Team>)> {
     let org = access::org_id(&cx.db, input.organization).await?;
-    let team = access::teams(&cx.db).create_team(user.id, org, input.name.trim()).await.map_err(access::failed)?;
+    let t = access::teams(&cx.db);
+    let team = t.create_team(user.id, org, input.name.trim()).await.map_err(access::failed)?;
+    if let Some(m) = t.team_access(team.id, user.id).await.map_err(access::failed)? {
+        current.set(&m).await.map_err(access::failed)?;
+    }
     Ok((StatusCode::CREATED, Json(team)))
 }
 
@@ -82,7 +87,6 @@ pub async fn update(cx: Cx<App>, can: Can<RenameTeam, TeamRole>, input: Valid<Js
 
 pub async fn destroy(cx: Cx<App>, can: Can<DeleteTeam, TeamRole>) -> Result<StatusCode> {
     let t = access::teams(&cx.db);
-    t.keeps_a_team(can.user_id, |team| team.id == can.team.id).await.map_err(access::failed)?;
     t.delete_team(&can.team).await.map_err(access::failed)?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -131,14 +135,14 @@ pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, input: Valid
     let target = Target::Team { team: can.team.id, role: input.role };
     access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.team.name).await;
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }
 
 /// A new link and a fresh lifetime; the old link stops working.
 pub async fn resend(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, Path(path): Path<InvitationPath>) -> Result<impl IntoResponse> {
     let new = access::teams(&cx.db).resend_team_invitation(&can.team, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.team.name).await;
     Ok((StatusCode::CREATED, Json(new.invitation)))
 }
 

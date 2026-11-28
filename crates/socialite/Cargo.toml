@@ -50,6 +50,8 @@ toml = "0.9"
 "stubs/migrations/create_social_accounts.down.sql" = "migrations/{timestamp}_create_social_accounts.down.sql"
 "stubs/migrations/allow_null_passwords.up.sql" = "migrations/{timestamp}_allow_null_passwords.up.sql"
 "stubs/migrations/allow_null_passwords.down.sql" = "migrations/{timestamp}_allow_null_passwords.down.sql"
+"stubs/migrations/add_social_account_details.up.sql" = "migrations/{timestamp}_add_social_account_details.up.sql"
+"stubs/migrations/add_social_account_details.down.sql" = "migrations/{timestamp}_add_social_account_details.down.sql"
 "stubs/social.rs" = "src/social.rs"
 "stubs/handlers/social.rs" = "src/handlers/social.rs"
 
@@ -58,6 +60,8 @@ toml = "0.9"
 "stubs/sqlite/migrations/create_social_accounts.down.sql" = "migrations/{timestamp}_create_social_accounts.down.sql"
 "stubs/sqlite/migrations/allow_null_passwords.up.sql" = "migrations/{timestamp}_allow_null_passwords.up.sql"
 "stubs/sqlite/migrations/allow_null_passwords.down.sql" = "migrations/{timestamp}_allow_null_passwords.down.sql"
+"stubs/sqlite/migrations/add_social_account_details.up.sql" = "migrations/{timestamp}_add_social_account_details.up.sql"
+"stubs/sqlite/migrations/add_social_account_details.down.sql" = "migrations/{timestamp}_add_social_account_details.down.sql"
 "stubs/sqlite/social.rs" = "src/social.rs"
 "stubs/handlers/social.rs" = "src/handlers/social.rs"
 
@@ -66,6 +70,8 @@ toml = "0.9"
 "stubs/mysql/migrations/create_social_accounts.down.sql" = "migrations/{timestamp}_create_social_accounts.down.sql"
 "stubs/mysql/migrations/allow_null_passwords.up.sql" = "migrations/{timestamp}_allow_null_passwords.up.sql"
 "stubs/mysql/migrations/allow_null_passwords.down.sql" = "migrations/{timestamp}_allow_null_passwords.down.sql"
+"stubs/mysql/migrations/add_social_account_details.up.sql" = "migrations/{timestamp}_add_social_account_details.up.sql"
+"stubs/mysql/migrations/add_social_account_details.down.sql" = "migrations/{timestamp}_add_social_account_details.down.sql"
 "stubs/mysql/social.rs" = "src/social.rs"
 "stubs/handlers/social.rs" = "src/handlers/social.rs"
 
@@ -73,11 +79,15 @@ toml = "0.9"
 [package.metadata.art.with-ui]
 "stubs/ui/handlers/social.rs" = "src/handlers/social.rs"
 "stubs/components/SocialButtons.vue" = "resources/js/components/SocialButtons.vue"
+"stubs/pages/settings/connected-accounts.vue" = "resources/js/pages/settings/connected-accounts.vue"
+"stubs/types/SocialAccount.ts" = "resources/js/types/SocialAccount.ts"
+"stubs/types/ConnectedAccountsPage.ts" = "resources/js/types/ConnectedAccountsPage.ts"
 
 [package.metadata.art]
 agents = """
 - Each provider is a Cargo feature (`google`, `github`, ...) plus `route`; `socialite::routes(&mut r, provider, handlers::social::callback)` adds `/auth/{provider}` and its callback.
-- Account linking lives in `src/social.rs` (`UserStore::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`.
+- Account linking lives in `src/social.rs` (`UserStore::find_or_create_social`): it links by email only when the provider verified it. Keep `TRUST_UNVERIFIED_EMAILS = false`. Each login refreshes the account's email, username, avatar_url and last_used_at.
+- `UserStore::unlink_social` refuses to remove the last way to sign in (no password, no other provider); add passkeys there if the app has them. The unlink handler takes `auth::RecentlyConfirmed<User>`.
 - Provider credentials live in `[socialite.<provider>]` in config (`ProviderConfig`, feature `configured`); build with `GitHub::from_config(cfg)?`. Secrets come from `required_secret_env(...)`, never literals.
 - Docs: https://toolkit.projectlighthouse.io/docs/modules/socialite.md"""
 notes = """
@@ -100,10 +110,19 @@ Needs `auth` published first (it extends src/users.rs). Enable the route feature
                         }
                         // ... the same per provider; then .layer(...) and .build(...) on `r`
   src/handlers/mod.rs   pub mod social;
+  src/routes.rs         r.group("/settings", |r| {
+                            r.layer(auth::require::<users::User>());
+                            r.get("/connected-accounts", handlers::social::accounts).name("social.accounts");
+                            r.delete("/connected-accounts/{provider}", handlers::social::unlink).name("social.unlink");
+                        });
 
-`socialite::routes` adds GET /auth/{provider} and /auth/{provider}/callback.
-The migrations add `social_accounts` and make `users.password_hash` nullable:
-social-only accounts have no password until they set one with "forgot password".
+`socialite::routes` adds GET /auth/{provider} and /auth/{provider}/callback; a logged-in user who
+visits them links the provider to their account.
+The migrations add `social_accounts` (with email, username, avatar_url, last_used_at) and make
+`users.password_hash` nullable:
+social-only accounts have no password until they set one with "forgot password". (auth's users table
+allows it already; on SQLite the migration is empty: an older users table with `password_hash not null`
+needs a hand rebuild that keeps all its columns.)
 Then run `art migrate`."""
 with-ui-notes = """
 Needs `auth --with-ui` published first. Enable the route feature and your providers:
@@ -129,10 +148,14 @@ Needs `auth --with-ui` published first. Enable the route feature and your provid
                         inertia::layer()...share(move |_| serde_json::json!({ "social": enabled.clone() }))
   src/handlers/mod.rs   pub mod social;
   login/register pages  import SocialButtons from '../../components/SocialButtons.vue'  and  <SocialButtons />
+  settings navigation   link /settings/connected-accounts
 
 `socialite::routes` adds GET /auth/{provider} and /auth/{provider}/callback.
-The migrations add `social_accounts` and make `users.password_hash` nullable:
-social-only accounts have no password until they set one with "forgot password".
+The migrations add `social_accounts` (with email, username, avatar_url, last_used_at) and make
+`users.password_hash` nullable:
+social-only accounts have no password until they set one with "forgot password". (auth's users table
+allows it already; on SQLite the migration is empty: an older users table with `password_hash not null`
+needs a hand rebuild that keeps all its columns.)
 Then run `art migrate`."""
 
 [lints]

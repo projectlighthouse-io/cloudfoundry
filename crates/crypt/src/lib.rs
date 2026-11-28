@@ -8,6 +8,12 @@
 //! assert_eq!(crypt.decrypt(b"totp:42", &sealed).unwrap(), b"secret");
 //! assert!(crypt.decrypt(b"totp:43", &sealed).is_err(), "bound to its purpose");
 //! ```
+//!
+//! - [`Encrypted<T>`]: a serde value sealed for a column (`bytea`), with
+//!   feature `sqlx` a column type. `Debug` prints `…`.
+//! - Keys rotate: `APP_KEY=new,old` encrypts with the first and opens with
+//!   any; `crypt:rotate` (feature `command` plus a driver feature) re-seals a
+//!   column with the newest key so the old one can go.
 
 use std::fmt;
 
@@ -18,6 +24,15 @@ use chacha20poly1305::{
 };
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+
+mod encrypted;
+pub use encrypted::Encrypted;
+
+#[cfg(any(feature = "postgres", feature = "sqlite", feature = "mysql"))]
+pub mod rotate;
+
+#[cfg(all(feature = "command", any(feature = "postgres", feature = "sqlite", feature = "mysql")))]
+pub mod command;
 
 const VERSION: u8 = 1;
 const ID: usize = 4;

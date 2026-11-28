@@ -5,7 +5,7 @@ use route::{Body, Cx, IntoResponse, Json, Path, Query, Redirect, http::{Response
 use serde::{Deserialize, Serialize};
 use validate::{Errors, Valid};
 
-use crate::{mailer::mailer, requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
+use crate::{mailer::deliver, requests::password_reset::{ForgotPassword, ResetPassword}, state::App, users::{User, UserStore}};
 
 #[derive(Serialize)]
 pub struct Forgot {
@@ -37,10 +37,7 @@ async fn send_reset_link(app: &App, user: &User, token: &str) {
         .map(|b| if b.is_ascii_alphanumeric() || b"-._~@".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
         .collect();
     let link = format!("{}/reset-password/{token}?email={email}", app.cfg.app_url);
-    let text = format!("Someone asked to reset the password of your account.\n\nChoose a new one here (the link works for an hour):\n{link}\n\nIf it was not you, ignore this mail.");
-    if let Err(e) = mailer(app).send(mail::Message::new(&user.email, "Reset your password", text)).await {
-        tracing::error!("password reset mail to {}: {e}", user.email);
-    }
+    deliver(app, include_str!("../../resources/mail/reset-password.md"), &user.email, &[("link", &link)]).await;
 }
 
 #[derive(Deserialize)]

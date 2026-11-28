@@ -127,7 +127,6 @@ pub async fn update(cx: Cx<App>, can: OrgCan<RenameOrg, OrgRole>, input: Valid<J
 
 pub async fn destroy(cx: Cx<App>, can: OrgCan<DeleteOrg, OrgRole>) -> Result<Redirect> {
     let t = access::teams(&cx.db);
-    t.keeps_a_team(can.user_id, |team| team.org_id == Some(can.org.id)).await.map_err(access::failed)?;
     t.delete_org(&can.org).await.map_err(access::failed)?;
     Ok(Redirect::to("/organizations"))
 }
@@ -167,7 +166,7 @@ pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, session
     let target = Target::Org { org: can.org.id, role: input.role };
     access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.org.name).await;
     flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.org))
 }
@@ -175,7 +174,7 @@ pub async fn invite(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, session
 /// A new link and a fresh lifetime; the old link stops working.
 pub async fn resend(cx: Cx<App>, can: OrgCan<ManageOrgMembers, OrgRole>, session: Session, Path(path): Path<InvitationPath>) -> Result<Redirect> {
     let new = access::teams(&cx.db).resend_org_invitation(&can.org, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.org.name).await;
     flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.org))
 }

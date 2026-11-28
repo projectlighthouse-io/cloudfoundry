@@ -10,7 +10,27 @@ base64 = "0.22"
 chacha20poly1305 = "0.10"
 getrandom = "0.3"
 hmac = "0.12"
+serde = "1"
+serde_json = "1"
 sha2 = "0.10"
+
+clap = { version = "4", features = ["derive"], optional = true }
+sqlx = { version = "0.8", default-features = false, optional = true }
+
+[features]
+# `Encrypted<T>` as an sqlx column type (bytes).
+sqlx = ["dep:sqlx"]
+# `crypt::rotate::Rotate` for the pools, and `crypt:rotate` with feature `command`.
+postgres = ["sqlx", "sqlx/postgres", "sqlx/runtime-tokio"]
+sqlite = ["sqlx", "sqlx/sqlite", "sqlx/runtime-tokio"]
+mysql = ["sqlx", "sqlx/mysql", "sqlx/runtime-tokio"]
+# `crypt::command::rotate` for `crypt:rotate` (with a driver feature).
+command = ["dep:clap"]
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true

@@ -43,7 +43,7 @@ mod memory;
 mod sql;
 
 #[cfg(feature = "session")]
-pub use current::CurrentTeam;
+pub use current::{CurrentTeam, RequireCurrentTeam, RequireCurrentTeamService, intended, require_current_team};
 #[cfg(feature = "auth")]
 pub use inputs::{AuthUser, auth_user};
 pub use inputs::{Can, Identify, Membership, OrgCan, OrgMembership, TeamsLayer, TeamsService, layer};
@@ -165,8 +165,6 @@ pub enum Error {
     InvitationExpired,
     /// The invitation was sent to another email address.
     EmailMismatch,
-    /// Teams are required and this would leave the user without one.
-    LastTeam,
     /// This email already has an invitation that has not expired.
     /// Send that one again instead.
     AlreadyInvited,
@@ -184,7 +182,6 @@ impl fmt::Display for Error {
             Self::NotFound => f.write_str("not found"),
             Self::InvitationExpired => f.write_str("the invitation has expired"),
             Self::EmailMismatch => f.write_str("the invitation was sent to another email address"),
-            Self::LastTeam => f.write_str("teams are required; this is the user's last team"),
             Self::AlreadyInvited => f.write_str("this email already has a pending invitation"),
             Self::Store(e) => write!(f, "teams store: {e}"),
         }
@@ -262,14 +259,11 @@ pub struct NewInvitation<R, O> {
 }
 
 /// The rules over a [`Store`]. Cheap to clone.
-pub struct Teams<S>(Arc<S>, Option<Arc<PersonalTeam>>);
-
-/// Names a user's personal team in required mode, from their id.
-type PersonalTeam = dyn Fn(i64) -> String + Send + Sync;
+pub struct Teams<S>(Arc<S>);
 
 impl<S> Clone for Teams<S> {
     fn clone(&self) -> Self {
-        Self(self.0.clone(), self.1.clone())
+        Self(self.0.clone())
     }
 }
 
@@ -278,41 +272,7 @@ type O<S> = <S as Store>::OrgRole;
 
 impl<S: Store> Teams<S> {
     pub fn new(store: S) -> Self {
-        Self(Arc::new(store), None)
-    }
-
-    /// Every user has a team. A user with none gets a personal team, named by
-    /// `name(user_id)`, the next time [`CurrentTeam`](crate::CurrentTeam) is
-    /// resolved; leaving or losing the last one is [`Error::LastTeam`].
-    pub fn require_team(mut self, name: impl Fn(i64) -> String + Send + Sync + 'static) -> Self {
-        self.1 = Some(Arc::new(name));
-        self
-    }
-
-    /// Whether [`Teams::require_team`] is on.
-    pub fn requires_team(&self) -> bool {
-        self.1.is_some()
-    }
-
-    /// [`Error::LastTeam`] when teams are required and `user` would have no
-    /// team left without the ones `leaving` matches. Removing members checks
-    /// this itself; call it before deleting a team or an organization.
-    pub async fn keeps_a_team(&self, user: i64, leaving: impl Fn(&Team) -> bool) -> Result<(), Error> {
-        if self.1.is_some() && self.teams_of(user).await?.iter().all(|m| leaving(&m.team)) {
-            return Err(Error::LastTeam);
-        }
-        Ok(())
-    }
-
-    /// The team to land on when none is chosen: the first by id, or in
-    /// required mode a new personal team.
-    pub async fn fallback_team(&self, user: i64) -> Result<Option<Membership<R<S>>>, Error> {
-        if let Some(first) = self.teams_of(user).await?.into_iter().next() {
-            return Ok(Some(first));
-        }
-        let Some(name) = &self.1 else { return Ok(None) };
-        let team = self.0.create_team(user, None, &name(user)).await?;
-        Ok(Some(Membership { team, role: R::<S>::OWNER, via_org: false, user_id: user }))
+        Self(Arc::new(store))
     }
 
     /// The store, for reads such as `team_members` and `org_invitations`.
@@ -376,7 +336,6 @@ impl<S: Store> Teams<S> {
         if current == R::<S>::OWNER && self.team_owners(team.id).await? == 1 {
             return Err(Error::LastOwner);
         }
-        self.keeps_a_team(user, |t| t.id == team.id).await?;
         self.0.remove_team_member(team.id, user).await
     }
 
@@ -404,7 +363,6 @@ impl<S: Store> Teams<S> {
         if current == O::<S>::OWNER && self.org_owners(org.id).await? == 1 {
             return Err(Error::LastOwner);
         }
-        self.keeps_a_team(user, |t| t.org_id == Some(org.id)).await?;
         self.0.remove_org_member(org.id, user).await
     }
 

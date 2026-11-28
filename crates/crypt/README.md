@@ -1,24 +1,26 @@
 # crypt
 
-Encrypt values at rest (database columns, files), with key rotation.
+Encrypt values at rest: XChaCha20-Poly1305, keys derived from `APP_KEY`. `APP_KEY="new,old"` encrypts with the
+first and opens with any, so keys rotate.
 
 ```toml
 [dependencies]
-crypt = { git = "https://github.com/projectlighthouse-io/toolkit" }
+crypt = { git = "https://github.com/projectlighthouse-io/toolkit", features = ["postgres", "command"] }
 ```
 
 ```rust
-use crypt::{Encrypter, Keys};
+let crypt = crypt::Encrypter::new(crypt::Keys::parse(app_key)?);
+let sealed = crypt.encrypt(b"factor2/totp:42", secret)?;          // bound to its purpose
 
-let crypt = Encrypter::new(Keys::from_env("APP_KEY")?);      // comma-separated, newest first
-let sealed = crypt.encrypt(b"totp:42", secret)?;             // store these bytes (bytea / blob)
-let secret = crypt.decrypt(b"totp:42", &sealed)?;
-if crypt.needs_rotation(&sealed) { /* re-encrypt with the newest key and store */ }
+// A serde value in a bytea/blob column (features sqlx or a driver). Debug prints `…`.
+let creds = crypt::Encrypted::seal(&crypt, b"integrations:7", &credentials)?;
+let credentials: Credentials = creds.open(&crypt, b"integrations:7")?;
 ```
 
-XChaCha20-Poly1305 with a random 24-byte nonce. The `purpose` (e.g. `totp:<user id>`) is bound into the tag, so
-a value copied to another row or column does not decrypt. The key is derived from `APP_KEY` with its own label,
-so the same `APP_KEY` can serve `securecookie` without the two ever sharing a key. Every failure is one opaque
-error; keys never print. No timestamps: values at rest do not expire.
+`crypt:rotate --table t --column c [--id id] [--purpose 'p:{id}'] [--dry-run]` re-encrypts a column with the
+newest key (pages by id, conditional updates, idempotent); register it with `crypt::command::rotate(|app| ...)`.
+`crypt::rotate::Rotate` is implemented for the sqlx pools of the enabled drivers.
 
-Format: `version (1) | key id (4) | nonce (24) | ciphertext + tag`.
+Tests: `cargo test -p crypt --features sqlite,command`; Postgres and MySQL with `CRYPT_PG_URL` / `CRYPT_MYSQL_URL`.
+
+Docs: https://toolkit.projectlighthouse.io/docs/crates/crypt.md

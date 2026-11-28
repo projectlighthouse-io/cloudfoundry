@@ -69,7 +69,7 @@ trait Lookup<R, O>: Send + Sync {
     fn team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     fn org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<O>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
-    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn has_team(&self, user: i64) -> BoxFuture<'_, Result<bool, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
     fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
@@ -86,8 +86,8 @@ impl<S: Store> Lookup<S::Role, S::OrgRole> for Teams<S> {
     fn org_public(&self, org: Uuid<Org>, user: i64) -> BoxFuture<'_, Result<Option<OrgMembership<S::OrgRole>>, Error>> {
         Box::pin(self.org_access_by_uuid(org, user))
     }
-    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<S::Role>>, Error>> {
-        Box::pin(Teams::fallback_team(self, user))
+    fn has_team(&self, user: i64) -> BoxFuture<'_, Result<bool, Error>> {
+        Box::pin(async move { Ok(!self.teams_of(user).await?.is_empty()) })
     }
     fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>> {
         Box::pin(self.store().current_team_id(user))
@@ -131,7 +131,7 @@ pub(crate) trait TeamOnly<R>: Send + Sync {
     fn lookup_team(&self, team: i64, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     fn lookup_team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
-    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>>;
+    fn has_team(&self, user: i64) -> BoxFuture<'_, Result<bool, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
     fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>>;
     #[cfg_attr(not(feature = "session"), allow(dead_code))]
@@ -153,8 +153,8 @@ impl<R: Role, O: OrgRole> TeamOnly<R> for Gate<R, O> {
     fn lookup_team_public(&self, team: Uuid<Team>, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
         self.lookup.team_public(team, user)
     }
-    fn fallback_team(&self, user: i64) -> BoxFuture<'_, Result<Option<Membership<R>>, Error>> {
-        self.lookup.fallback_team(user)
+    fn has_team(&self, user: i64) -> BoxFuture<'_, Result<bool, Error>> {
+        self.lookup.has_team(user)
     }
     fn saved_team(&self, user: i64) -> BoxFuture<'_, Result<Option<i64>, Error>> {
         self.lookup.saved_team(user)

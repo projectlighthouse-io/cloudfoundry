@@ -19,11 +19,10 @@ use crate::state::Primary;
 pub type Store = teams::PostgresStore<TeamRole, OrgRole>;
 pub type Teams = teams::Teams<Store>;
 
-/// Every user has a team: one with none gets a personal team on their next
-/// request that resolves `CurrentTeam`, and cannot leave their last one.
-/// Drop `.require_team(...)` to make teams optional.
+/// No personal teams: a user creates or joins one. Routes that need a team
+/// go behind `teams::require_current_team::<TeamRole>()` (see src/routes.rs).
 pub fn teams(db: &Db<Primary>) -> Teams {
-    teams::Teams::new(teams::PostgresStore::new(db.pool().clone())).require_team(|_user| "Personal".to_owned())
+    teams::Teams::new(teams::PostgresStore::new(db.pool().clone()))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, TS)]
@@ -130,7 +129,6 @@ pub fn failed(e: teams::Error) -> Response<Body> {
         teams::Error::NotMember | teams::Error::NotFound => StatusCode::NOT_FOUND.into_response(),
         teams::Error::InvitationExpired => invalid("token", "This invitation has expired. Ask for a new one."),
         teams::Error::EmailMismatch => invalid("token", "This invitation was sent to another email address."),
-        teams::Error::LastTeam => invalid("team", "You need at least one team. Create or join another one first."),
         teams::Error::AlreadyInvited => invalid("email", "They already have a pending invitation. Send it again from the list."),
         teams::Error::Store(e) => {
             tracing::error!("teams: {e}");
@@ -236,8 +234,9 @@ pub fn invitation_link(app_url: &str, token: &str) -> String {
     format!("{app_url}/invitations/{token}")
 }
 
-/// Logged for local development only: anyone who reads the log can join.
-/// Send it by mail instead.
-pub fn send_invitation(app_url: &str, email: &str, token: &str) {
-    tracing::info!("invitation link for {email}: {}", invitation_link(app_url, token));
+/// Mail the accept link (`resources/mail/invitation.md`); `name` is the team
+/// or organization. A mail failure is logged; "Send again" makes a new link.
+pub async fn send_invitation(app: &crate::state::App, email: &str, token: &str, name: &str) {
+    let link = invitation_link(&app.cfg.app_url, token);
+    crate::mailer::deliver(app, include_str!("../resources/mail/invitation.md"), email, &[("name", name), ("link", &link)]).await;
 }

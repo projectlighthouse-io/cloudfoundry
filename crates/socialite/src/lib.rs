@@ -80,6 +80,8 @@ pub struct SocialUser {
     /// The provider's stable id for this user.
     pub id: String,
     pub name: Option<String>,
+    /// The handle on the provider (GitHub login, X username, ...); `None` when it has none (Google).
+    pub username: Option<String>,
     pub email: Option<String>,
     /// Whether the provider vouches for `email`; `None` when it does not say.
     pub email_verified: Option<bool>,

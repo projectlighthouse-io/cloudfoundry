@@ -42,3 +42,32 @@ pub async fn callback(cx: Cx<App>, auth: Auth<User>, social: SocialCallback) -> 
         }
     }
 }
+
+/// The user's linked provider accounts.
+pub async fn accounts(cx: Cx<App>, user: auth::Authed<User>) -> Result<route::Json<Vec<crate::social::SocialAccount>>, route::http::StatusCode> {
+    let users = UserStore { db: cx.db.clone() };
+    users.social_accounts(user.id).await.map(route::Json).map_err(|e| {
+        tracing::error!("social accounts: {e}");
+        route::http::StatusCode::INTERNAL_SERVER_ERROR
+    })
+}
+
+/// Unlink a provider: `204`, `404` if it is not linked, `422` if it is the
+/// user's last way to sign in. Needs a recent confirmation (`423` until then).
+pub async fn unlink(cx: Cx<App>, user: auth::RecentlyConfirmed<User>, route::Path(provider): route::Path<String>) -> Result<route::http::StatusCode, route::http::Response<route::Body>> {
+    use route::{IntoResponse, http::StatusCode};
+    let users = UserStore { db: cx.db.clone() };
+    match users.unlink_social(&user, &provider).await {
+        Ok(()) => Ok(StatusCode::NO_CONTENT),
+        Err(crate::social::UnlinkError::NotLinked) => Err(StatusCode::NOT_FOUND.into_response()),
+        Err(crate::social::UnlinkError::LastSignIn) => {
+            let mut errors = validate::Errors::new();
+            errors.add("provider", "This is your only way to sign in. Set a password first.");
+            Err(errors.into_response())
+        }
+        Err(crate::social::UnlinkError::Db(e)) => {
+            tracing::error!("unlink {provider}: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
+    }
+}

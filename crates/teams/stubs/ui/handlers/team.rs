@@ -43,6 +43,24 @@ pub struct TeamsPage {
     organizations: Vec<Org>,
 }
 
+/// Props for `resources/js/pages/teams/select.vue`, the team picker that
+/// `teams::require_current_team` sends users to.
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct SelectTeamPage {
+    email: String,
+    teams: Vec<TeamItem>,
+}
+
+/// Props for `resources/js/pages/teams/create.vue`.
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct CreateTeamPage {
+    email: String,
+    /// Organizations the user can create teams in.
+    organizations: Vec<Org>,
+}
+
 /// A pending invitation; `R` is the team or organization role. Shared with
 /// the organization pages.
 #[derive(Serialize, TS)]
@@ -113,23 +131,46 @@ fn back(team: &Team) -> Redirect {
     Redirect::to(format!("/teams/{}", team.uuid))
 }
 
-pub async fn index(cx: Cx<App>, user: Authed<User>, current: CurrentTeam<TeamRole>) -> Result<inertia::Page<TeamsPage>> {
+/// The user's teams with the current one marked; `TeamsPage` and the picker share it.
+async fn team_items(cx: &App, user: i64, current: Option<i64>) -> Result<(Vec<TeamItem>, Vec<Org>)> {
     let t = access::teams(&cx.db);
-    let current = current.as_ref().map(|m| m.team.id);
-    let orgs = t.store().orgs_of(user.id).await.map_err(access::failed)?;
+    let orgs = t.store().orgs_of(user).await.map_err(access::failed)?;
     let mut teams = Vec::new();
-    for m in t.teams_of(user.id).await.map_err(access::failed)? {
+    for m in t.teams_of(user).await.map_err(access::failed)? {
         let organization = m.team.org_id.and_then(|id| orgs.iter().find(|(o, _)| o.id == id).map(|(o, _)| o.name.clone()));
         teams.push(TeamItem { uuid: m.team.uuid, current: current == Some(m.team.id), name: m.team.name, organization, role: m.role });
     }
-    let organizations = orgs.into_iter().map(|(o, _)| o).collect();
+    Ok((teams, orgs.into_iter().map(|(o, _)| o).collect()))
+}
+
+/// Pick a team to work in. Without any team, "create a team" instead.
+pub async fn select(cx: Cx<App>, user: Authed<User>, current: CurrentTeam<TeamRole>) -> Result<std::result::Result<inertia::Page<SelectTeamPage>, Redirect>> {
+    let (teams, _) = team_items(&cx, user.id, current.as_ref().map(|m| m.team.id)).await?;
+    if teams.is_empty() {
+        return Ok(Err(Redirect::to("/teams/create")));
+    }
+    Ok(Ok(inertia::render("teams/select", SelectTeamPage { email: user.email.clone(), teams })))
+}
+
+pub async fn create(cx: Cx<App>, user: Authed<User>) -> Result<inertia::Page<CreateTeamPage>> {
+    let orgs = access::teams(&cx.db).store().orgs_of(user.id).await.map_err(access::failed)?;
+    Ok(inertia::render("teams/create", CreateTeamPage { email: user.email.clone(), organizations: orgs.into_iter().map(|(o, _)| o).collect() }))
+}
+
+pub async fn index(cx: Cx<App>, user: Authed<User>, current: CurrentTeam<TeamRole>) -> Result<inertia::Page<TeamsPage>> {
+    let (teams, organizations) = team_items(&cx, user.id, current.as_ref().map(|m| m.team.id)).await?;
     Ok(inertia::render("teams/index", TeamsPage { email: user.email.clone(), teams, organizations }))
 }
 
-pub async fn store(cx: Cx<App>, user: Authed<User>, input: Valid<Json<NewTeam>>) -> Result<Redirect> {
+/// A new team becomes the current one; back to the page that needed a team, if any.
+pub async fn store(cx: Cx<App>, user: Authed<User>, mut current: CurrentTeam<TeamRole>, session: Session, input: Valid<Json<NewTeam>>) -> Result<Redirect> {
     let org = access::org_id(&cx.db, input.organization).await?;
-    let team = access::teams(&cx.db).create_team(user.id, org, input.name.trim()).await.map_err(access::failed)?;
-    Ok(back(&team))
+    let t = access::teams(&cx.db);
+    let team = t.create_team(user.id, org, input.name.trim()).await.map_err(access::failed)?;
+    if let Some(m) = t.team_access(team.id, user.id).await.map_err(access::failed)? {
+        current.set(&m).await.map_err(access::failed)?;
+    }
+    Ok(Redirect::to(teams::intended(&session, &format!("/teams/{}", team.uuid))))
 }
 
 pub async fn show(cx: Cx<App>, user: Authed<User>, session: Session, current: CurrentTeam<TeamRole>, m: Membership<TeamRole>) -> Result<inertia::Page<TeamPage>> {
@@ -176,14 +217,14 @@ pub async fn update(cx: Cx<App>, can: Can<RenameTeam, TeamRole>, input: Valid<Js
 
 pub async fn destroy(cx: Cx<App>, can: Can<DeleteTeam, TeamRole>) -> Result<Redirect> {
     let t = access::teams(&cx.db);
-    t.keeps_a_team(can.user_id, |team| team.id == can.team.id).await.map_err(access::failed)?;
     t.delete_team(&can.team).await.map_err(access::failed)?;
     Ok(Redirect::to("/teams"))
 }
 
-pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>) -> Result<Redirect> {
+/// Make this the current team; back to the page that needed one, if any.
+pub async fn switch(m: Membership<TeamRole>, mut current: CurrentTeam<TeamRole>, session: Session) -> Result<Redirect> {
     current.set(&m).await.map_err(access::failed)?;
-    Ok(back(&m.team))
+    Ok(Redirect::to(teams::intended(&session, &format!("/teams/{}", m.team.uuid))))
 }
 
 pub async fn leave(cx: Cx<App>, m: Membership<TeamRole>) -> Result<Redirect> {
@@ -222,7 +263,7 @@ pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Ses
     let target = Target::Team { team: can.team.id, role: input.role };
     access::not_a_member(&cx.db, target, input.email.trim()).await?;
     let new = access::teams(&cx.db).invite(target, input.email.trim(), can.user_id, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.team.name).await;
     flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.team))
 }
@@ -230,7 +271,7 @@ pub async fn invite(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Ses
 /// A new link and a fresh lifetime; the old link stops working.
 pub async fn resend(cx: Cx<App>, can: Can<InviteMembers, TeamRole>, session: Session, Path(path): Path<InvitationPath>) -> Result<Redirect> {
     let new = access::teams(&cx.db).resend_team_invitation(&can.team, path.invitation, INVITATION_LIFETIME).await.map_err(access::failed)?;
-    access::send_invitation(&cx.cfg.app_url, &new.invitation.email, &new.token);
+    access::send_invitation(&cx, &new.invitation.email, &new.token, &can.team.name).await;
     flash_link(&cx.cfg.app_url, &session, &new);
     Ok(back(&can.team))
 }
